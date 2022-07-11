@@ -5,6 +5,8 @@
 #define LOAD_16B_RR(e, r1, r2) set_reg16(e, read2Bytes(e), r1, r2);
 #define LOAD_8R_16BRR(e, r1, r2, r3) set_reg16(e, r2, r3, read_address(e, get_reg_byte(e, r1)));
 #define LOAD_16RB_R(e, r1, r2, r3) write_to_reg(e, read_address(e, get_reg16(e, r1, r2)), r3);
+#define LOAD_R_u8(e, r) write_to_reg(e, r, readByte(e));
+#define LOAD_R8_R8(e, r1, r2) write_to_reg(e, r1, get_reg_byte(e, r2));
 #define INC_R1_R2(e, reg1, reg2) set_reg16(e, get_reg16(e, reg1, reg2) + 1, reg1, reg2);
 #define DEC_R1_R2(e, reg1, reg2) set_reg16(e, get_reg16(e, reg1, reg2) - 1, reg1, reg2);
 #define INC_R(e,r) write_to_reg(e, r, get_reg_byte(e,r) + 1);
@@ -174,6 +176,12 @@ static void cpl(Emulator* emulator){
 
     set_flag(emulator, FLAG_N, 1);
     set_flag(emulator, FLAG_H, 1);
+}
+
+static void ccf(Emulator* emulator){
+    set_flag(emulator, FLAG_C, get_flag(emulator, FLAG_C) ^ 1);
+    set_flag(emulator, FLAG_N, 0);
+    set_flag(emulator, FLAG_H, 0);
 }
 
 static void JumpConditionRelative(Emulator* emulator, bool condition){
@@ -406,6 +414,52 @@ void dispatch_emulator(Emulator* emulator){
             break;
         }
         case 0x38: JumpConditionRelative(emulator, C(emulator)); // JR C i8
+        case 0x39: {
+            // ADD HL SP
+            uint16_t hl_byte = get_reg16(emulator, REGISTER_H, REGISTER_L);
+            uint16_t sp_byte = emulator->rSP;
+            uint16_t final = hl_byte + sp_byte;
+
+            set_reg16(emulator, final, REGISTER_H, REGISTER_L);
+
+            set_flag(emulator, FLAG_N, 0);
+            SET_FLAG_H_ADD16(emulator, hl_byte, sp_byte);
+            SET_FLAG_C_ADD16(emulator, hl_byte, sp_byte);
+
+            break;
+        }
+
+        case 0x3A: DEC_R1_R2(emulator, REGISTER_H, REGISTER_L); LOAD_8R_16BRR(emulator, REGISTER_A, REGISTER_H, REGISTER_L); break;
+        case 0x3B: emulator->rSP--;
+        case 0x3C: increment_R_8(emulator, REGISTER_A); break;
+        case 0x3D: decrement_R_8(emulator, REGISTER_A); break;
+        case 0x3E: LOAD_R_u8(emulator, REGISTER_A); break;
+        case 0x3F: ccf(emulator); break;
+        case 0x40: LOAD_R8_R8(emulator, REGISTER_B, REGISTER_B); break;
+        case 0x41: LOAD_R8_R8(emulator, REGISTER_B, REGISTER_C); break;
+        case 0x42: LOAD_R8_R8(emulator, REGISTER_B, REGISTER_D); break;
+        case 0x43: LOAD_R8_R8(emulator, REGISTER_B, REGISTER_E); break;
+        case 0x44: LOAD_R8_R8(emulator, REGISTER_B, REGISTER_H); break;
+        case 0x45: LOAD_R8_R8(emulator, REGISTER_B, REGISTER_L); break;
+        case 0x46: LOAD_8R_16BRR(emulator, REGISTER_B, REGISTER_H, REGISTER_L); break;
+        case 0x47: LOAD_R8_R8(emulator, REGISTER_B, REGISTER_A); break;
+        case 0x48: LOAD_R8_R8(emulator, REGISTER_C, REGISTER_B); break;
+        case 0x49: LOAD_R8_R8(emulator, REGISTER_C, REGISTER_C); break;
+        case 0x4A: LOAD_R8_R8(emulator, REGISTER_C, REGISTER_D); break;
+        case 0x4B: LOAD_R8_R8(emulator, REGISTER_C, REGISTER_E); break;
+        case 0x4C: LOAD_R8_R8(emulator, REGISTER_C, REGISTER_H); break;
+        case 0x4D: LOAD_R8_R8(emulator, REGISTER_C, REGISTER_L); break;
+        case 0x4E: LOAD_8R_16BRR(emulator, REGISTER_C, REGISTER_H, REGISTER_L); break;
+        case 0x4F: LOAD_R8_R8(emulator, REGISTER_C, REGISTER_A); break;
+        case 0x50: LOAD_R8_R8(emulator, REGISTER_D, REGISTER_B); break;
+        case 0x51: LOAD_R8_R8(emulator, REGISTER_D, REGISTER_C); break;
+        case 0x52: LOAD_R8_R8(emulator, REGISTER_D, REGISTER_D); break;
+        case 0x53: LOAD_R8_R8(emulator, REGISTER_D, REGISTER_E); break;
+        case 0x54: LOAD_R8_R8(emulator, REGISTER_D, REGISTER_H); break;
+        case 0x55: LOAD_R8_R8(emulator, REGISTER_D, REGISTER_L); break;
+        case 0x56: LOAD_8R_16BRR(emulator, REGISTER_D, REGISTER_H, REGISTER_L); break;
+        case 0x57: LOAD_R8_R8(emulator, REGISTER_D, REGISTER_A); break;
+        case 0x58: LOAD_R8_R8(emulator, REGISTER_E, REGISTER_B); break;
         
     }
 }
