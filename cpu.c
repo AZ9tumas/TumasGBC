@@ -11,8 +11,11 @@
 #define DEC_R(e,r) write_to_reg(e, r, get_reg_byte(e,r) - 1);
 #define LOAD_8B_R(e, r) write_to_reg(e, r, readByte(e));
 #define SET_FLAG_Z(e, r) set_flag(e, FLAG_Z, r==0?1:0);
-#define SET_FLAG_H_ADD(e, v1, v2) set_flag(emulator, FLAG_H, (((uint32_t)v1 & 0xf) + ((uint32_t)v2 & 0xf) > 0xf) ? 1 : 0);
-#define SET_FLAG_H_SUB(e, v1, v2) set_flag(emulator, FLAG_H, (((uint32_t)v1 & 0xf) + ((uint32_t)v2 & 0xf) > 0xf) ? 1 : 0);
+#define SET_FLAG_H_ADD(e, v1, v2) set_flag(e, FLAG_H, (((uint32_t)v1 & 0xf) + ((uint32_t)v2 & 0xf) > 0xf) ? 1 : 0);
+#define SET_FLAG_H_SUB(e, v1, v2) set_flag(e, FLAG_H, ((v1 & 0xf) - (v2 & 0xf) & 0x10) ? 1 : 0)
+#define SET_FLAG_H_ADD16(e, v1, v2) set_flag(e, FLAG_H, (((uint32_t)v1 & 0xfff) + ((uint32_t)v2 & 0xfff) > 0xfff) ? 0 : 1)
+#define SET_FLAG_C_ADD16(e, v1, v2) set_flag(e, FLAG_C, ((uint32_t)(v1) + (uint32_t)(v2)) > 0xFFFF ? 1 : 0)
+#define JUMP(e, r, b) write_to_reg(e, r, get_reg_byte(e, r) + b);
 
 Emulator* initEmulator(Emulator* emulator){
     emulator->rA = 0x01;
@@ -130,12 +133,35 @@ static void decrement_R_8(Emulator* emulator, REGISTER_TYPE reg){
     SET_FLAG_H_SUB(emulator, old_val, 1);
 }
 
-static void rotateLeftR8(Emulator* emulator, REGISTER_TYPE reg){
-    
+static void rotateRightR8(Emulator* emulator, REGISTER_TYPE reg) {
+    uint8_t val = get_reg_byte(emulator, reg);
+    uint8_t bitno1 = val & 1;
+
+    val >>= 1;
+    val |= bitno1 << 7;
+
+    write_to_reg(emulator, reg, val);
+
     set_flag(emulator, FLAG_Z, 0);
     set_flag(emulator, FLAG_H, 0);
     set_flag(emulator, FLAG_N, 0);
-    set_flag(emulator, FLAG_C, get_reg_byte(emulator, reg) >> 7);
+    set_flag(emulator, FLAG_C, bitno1);
+}
+
+static void rotateLeftR8(Emulator* emulator, REGISTER_TYPE reg){
+    
+    uint8_t val = get_reg_byte(emulator, reg);
+    uint8_t bitno7 = val >> 7;
+
+    val <<= 1;
+    val |= bitno7;
+
+    write_to_reg(emulator, reg, val);
+
+    set_flag(emulator, FLAG_Z, 0);
+    set_flag(emulator, FLAG_H, 0);
+    set_flag(emulator, FLAG_N, 0);
+    set_flag(emulator, FLAG_C, bitno7);
 }
 
 static void addRR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2, REGISTER_TYPE reg3, REGISTER_TYPE reg4){
@@ -147,6 +173,9 @@ static void addRR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2, 
 
     set_reg16(emulator, reg1, reg2, final_val);
 
+    set_flag(emulator, FLAG_N, 0);
+    SET_FLAG_H_ADD16(emulator, reg_16B_1_2, reg_16B_3_4);
+    SET_FLAG_C_ADD16(emulator, reg_16B_1_2, reg_16B_3_4);
 }
 
 static void addR8(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2){
@@ -158,11 +187,40 @@ static void addR8(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2){
     write_to_reg(emulator, reg1, final_val);
 }
 
+/*Rotate is a binary operation
+* The bytes can be represented in binary so 234 in binary is 11101010
+* If u do a rotate operation on 234, it's gonna rotate or move the bits in a particular direction
+* For example if u rotate 234 towards the right, it's gonna move the bit that's first to the second place, second to third and so on. It will move the eighth bit back to the first place 
+* That's why it's called rotate because it treats it like a circle and wraps it around
+* So rotating 234 to the right will turn 11101010 to 01110101
+* The bits moved to the right by 1 place and the last one moved to the place of the first. 
+* 01110101 is 117 in decimal
+* So if u have 234 in A, u execute RR A or rotate right A, it will store 117 in A
+* RRCA is just the normal rotate instruction but it only operates on the A register, and it stores the last bit to the carry flag. So if the last bit was 1 which rotated to the first place, it's gonna do the rotation but also store the bit in the C flag
+* Similarly you can rotate it to the left too
+* So rotating 234 to left will do this 11101010 -> 11010101
+* The bits moved to the left by one place 
+* And the first bit went to the last position
+* So that will give u 213 in decimal
+* RLCA does the same additional stuff as RRCA
+* Store the bit that wrapped around in the C flag
+* Now u don't have to sit and convert this to binary and then back to decimal when implementing this
+* Binary operators already exist that let u operate on individual bits
+* C has a 'shift' operator which shifts the bits to right or left
+* But that doesn't do the complete work as it still doesn't wrap around the bits
+* It fills the new space with a 0 instead
+So for example 234 << 1 will do 11101010 -> 11010100
+* It shifted them to the left by 1 place but just filled the new bit at the end with a 0 
+* Ull have to read the first bit manually before shifting, in that case it's 1. Then u use the shift operator. Then u insert that bit u read in the last place to complete the rotate operation.
+* Additionally u would also store the bit u read in the C flag
+* If it's RLCA
+*/
+
 void dispatch_emulator(Emulator* emulator){
     uint8_t opcode = read_address(emulator, emulator->rPC);
     emulator->rPC ++;
 
-    printf("OpCode: %d, %02x\n Instruction: ", opcode, opcode);
+    printf("OpCode: %d, 0x%02x\n Instruction: ", opcode, opcode);
     printInstruction(emulator);
     printf("\n\n");
 
@@ -192,8 +250,8 @@ void dispatch_emulator(Emulator* emulator){
         case 0x0C: increment_R_8(emulator, REGISTER_C);break;
         case 0x0D: decrement_R_8(emulator, REGISTER_C); break;
         case 0x0E: LOAD_8B_R(emulator, REGISTER_C); break;
-        // ignoring case 0x0F: RRCA
-        // ignoring case 0x10: STOP
+        case 0x0F: rotateRightR8(emulator, REGISTER_A); break;
+        case 0x10: break; // STOP (stops cpu)
         case 0x11: LOAD_16B_RR(emulator, REGISTER_D, REGISTER_E);break;
         case 0x12: LOAD_16RB_R(emulator, REGISTER_D, REGISTER_E, REGISTER_A); break;
         case 0x13: INC_R1_R2(emulator, REGISTER_B, REGISTER_C); break;
@@ -211,7 +269,7 @@ void dispatch_emulator(Emulator* emulator){
         // ignoring case 0x1F: RRA
         // ignoring case 0x20: JR NZ i8
         case 0x21: LOAD_16B_RR(emulator, REGISTER_H, REGISTER_L); break;
-        case 0x22: INC_R1_R2(emulator, REGISTER_H, REGISTER_L); LOAD_16RB_R(emulator, REGISTER_H, REGISTER_L, REGISTER_A); break;
+        case 0x22: LOAD_16RB_R(emulator, REGISTER_H, REGISTER_L, REGISTER_A); INC_R1_R2(emulator, REGISTER_H, REGISTER_L); break;
         case 0x23: INC_R1_R2(emulator, REGISTER_H, REGISTER_L); break;
         case 0x24: increment_R_8(emulator, REGISTER_H); break;
         case 0x25: decrement_R_8(emulator, REGISTER_H); break;
@@ -227,6 +285,9 @@ void dispatch_emulator(Emulator* emulator){
         // ignoring case 0x2F: CPL
         // ignoring case 0x30: JR NC, i8
         case 0x31: emulator->rSP = read2Bytes(emulator); break;
+        case 0x32: DEC_R1_R2(emulator, REGISTER_H, REGISTER_L); LOAD_8R_16BRR(emulator, REGISTER_A, REGISTER_H, REGISTER_L); break;
+        case 0x33: emulator->rSP++; break;
+        // case 0x34: 
     }
 
     printRegisters(emulator);
