@@ -10,12 +10,20 @@
 #define INC_R(e,r) write_to_reg(e, r, get_reg_byte(e,r) + 1);
 #define DEC_R(e,r) write_to_reg(e, r, get_reg_byte(e,r) - 1);
 #define LOAD_8B_R(e, r) write_to_reg(e, r, readByte(e));
-#define SET_FLAG_Z(e, r) set_flag(e, FLAG_Z, r==0?1:0);
+#define SET_FLAG_Z(e, v) set_flag(e, FLAG_Z, v == 0 ? 1 : 0);
 #define SET_FLAG_H_ADD(e, v1, v2) set_flag(e, FLAG_H, (((uint32_t)v1 & 0xf) + ((uint32_t)v2 & 0xf) > 0xf) ? 1 : 0);
 #define SET_FLAG_H_SUB(e, v1, v2) set_flag(e, FLAG_H, ((v1 & 0xf) - (v2 & 0xf) & 0x10) ? 1 : 0)
 #define SET_FLAG_H_ADD16(e, v1, v2) set_flag(e, FLAG_H, (((uint32_t)v1 & 0xfff) + ((uint32_t)v2 & 0xfff) > 0xfff) ? 0 : 1)
 #define SET_FLAG_C_ADD16(e, v1, v2) set_flag(e, FLAG_C, ((uint32_t)(v1) + (uint32_t)(v2)) > 0xFFFF ? 1 : 0)
 #define JUMP(e, r, b) write_to_reg(e, r, get_reg_byte(e, r) + b);
+
+// Jump Condition Check ...
+
+#define NZ(e) (get_flag(e, FLAG_Z) != 1)
+#define NC(e) (get_flag(e, FLAG_C) != 1)
+
+#define Z(e)  (get_flag(e, FLAG_Z) == 1)
+#define C(e)  (get_flag(e, FLAG_C) == 1)
 
 Emulator* initEmulator(Emulator* emulator){
     emulator->rA = 0x01;
@@ -133,6 +141,80 @@ static void decrement_R_8(Emulator* emulator, REGISTER_TYPE reg){
     SET_FLAG_H_SUB(emulator, old_val, 1);
 }
 
+static void decimal_adjust(Emulator* emulator){
+    uint8_t value = get_reg_byte(emulator, REGISTER_A);
+
+    if (get_flag(emulator, FLAG_N)) {
+        
+        // Previous operation was sub
+        if (get_flag(emulator, FLAG_H)) value -= 0x06;
+        if (get_flag(emulator, FLAG_C)) value -= 0x60;
+    } else {
+        // Previous operation was addition
+        if (get_flag(emulator, FLAG_H) || (value & 0xF) > 0x9) {
+            uint8_t original = value;
+            value += 0x6;
+
+            if (original > value) set_flag(emulator, FLAG_C, 1);
+        }
+        
+        if (get_flag(emulator, FLAG_C) || value > 0x9F) value += 0x60; set_flag(emulator, FLAG_C, 1);
+    }
+
+    SET_FLAG_Z(emulator, value);
+    set_flag(emulator, FLAG_H, 0);
+
+    write_to_reg(emulator, REGISTER_A, value);
+}
+
+static void cpl(Emulator* emulator){
+    write_to_reg(emulator, REGISTER_A, ~get_reg_byte(emulator, REGISTER_A));
+
+    set_flag(emulator, FLAG_N, 1);
+    set_flag(emulator, FLAG_H, 1);
+}
+
+static void JumpConditionRelative(Emulator* emulator, bool condition){
+    if (condition){
+        emulator->rPC += (int8_t)readByte(emulator);
+    }
+}
+
+// Rotates value to left, moves bit 7 to C flag and C flag's original value to bit 0
+static void RotateLeftCarryR8(Emulator* emulator, REGISTER_TYPE reg) {
+    uint8_t val = get_reg_byte(emulator, reg);
+    bool carry_flag = get_flag(emulator, FLAG_C);
+    uint8_t bit7 = val >> 7;
+
+    val <<= 1;
+    val |= carry_flag;
+
+    write_to_reg(emulator, reg, val);
+
+    set_flag(emulator, FLAG_Z, 0);
+    set_flag(emulator, FLAG_H, 0);
+    set_flag(emulator, FLAG_N, 0);
+    set_flag(emulator, FLAG_C, bit7);
+}
+
+// Rotates value to right, moves bit 0 to C flag and C flag's original value to bit 7 
+static void RotateRightCarryR8(Emulator* emulator, REGISTER_TYPE reg){
+    uint8_t val = get_reg_byte(emulator, reg);
+    bool carry_flag = get_flag(emulator, FLAG_C);
+    uint8_t bit0 = val & 1;
+
+    val >>= 1;
+    val |= carry_flag << 7;
+
+    write_to_reg(emulator, reg, val);
+
+    set_flag(emulator, FLAG_Z, 0);
+    set_flag(emulator, FLAG_H, 0);
+    set_flag(emulator, FLAG_N, 0);
+    set_flag(emulator, FLAG_C, bit0);
+}
+
+
 static void rotateRightR8(Emulator* emulator, REGISTER_TYPE reg) {
     uint8_t val = get_reg_byte(emulator, reg);
     uint8_t bitno1 = val & 1;
@@ -224,8 +306,6 @@ void dispatch_emulator(Emulator* emulator){
     printInstruction(emulator);
     printf("\n\n");
 
-    printRegisters(emulator);
-
     switch (opcode)
     {   
         case 0x00: break;
@@ -258,37 +338,35 @@ void dispatch_emulator(Emulator* emulator){
         case 0x14: increment_R_8(emulator, REGISTER_D); break;
         case 0x15: decrement_R_8(emulator, REGISTER_D); break;
         case 0x16: LOAD_8B_R(emulator, REGISTER_D); break;
-        // ignoring case 0x17: RLA
-        // ignoring case 0x18: JR i8 
+        case 0x17: RotateLeftCarryR8(emulator, REGISTER_A); break;
+        case 0x18: emulator->rPC += (uint8_t)readByte(emulator); break; // JR i8
         case 0x19: addRR16(emulator, REGISTER_H, REGISTER_L, REGISTER_D, REGISTER_E); break;
         case 0x1A: LOAD_8R_16BRR(emulator, REGISTER_A, REGISTER_D, REGISTER_E); break;
         case 0x1B: DEC_R1_R2(emulator, REGISTER_D, REGISTER_E); break;
         case 0x1C: increment_R_8(emulator, REGISTER_E); break;
         case 0x1D: decrement_R_8(emulator, REGISTER_E); break;
         case 0x1E: LOAD_8B_R(emulator, REGISTER_E); break;
-        // ignoring case 0x1F: RRA
-        // ignoring case 0x20: JR NZ i8
+        case 0x1F: RotateRightCarryR8(emulator, REGISTER_A); break;
+        case 0x20: JumpConditionRelative(emulator, NZ(emulator)); break; // JR NZ i8
         case 0x21: LOAD_16B_RR(emulator, REGISTER_H, REGISTER_L); break;
         case 0x22: LOAD_16RB_R(emulator, REGISTER_H, REGISTER_L, REGISTER_A); INC_R1_R2(emulator, REGISTER_H, REGISTER_L); break;
         case 0x23: INC_R1_R2(emulator, REGISTER_H, REGISTER_L); break;
         case 0x24: increment_R_8(emulator, REGISTER_H); break;
         case 0x25: decrement_R_8(emulator, REGISTER_H); break;
         case 0x26: LOAD_8B_R(emulator, REGISTER_H); break;
-        // ignoring case 0x27: DAA
-        // ignoring case 0x28: JR Z i8
+        case 0x27: decimal_adjust(emulator); break;
+        case 0x28: JumpConditionRelative(emulator, Z(emulator)); break; // JR Z i8
         case 0x29: addRR16(emulator, REGISTER_H, REGISTER_L, REGISTER_H, REGISTER_L); break;
         case 0x2A: INC_R1_R2(emulator, REGISTER_H, REGISTER_H); LOAD_8R_16BRR(emulator, REGISTER_A, REGISTER_H, REGISTER_L); break;
         case 0x2B: DEC_R1_R2(emulator, REGISTER_H, REGISTER_L); break;
         case 0x2C: increment_R_8(emulator, REGISTER_L); break;
         case 0x2D: decrement_R_8(emulator, REGISTER_L); break;
         case 0x2E: LOAD_8B_R(emulator,  REGISTER_L); break;
-        // ignoring case 0x2F: CPL
-        // ignoring case 0x30: JR NC, i8
+        case 0x2F: cpl(emulator); break; // CPL
+        case 0x30: JumpConditionRelative(emulator, NC(emulator)); // JR NC i8
         case 0x31: emulator->rSP = read2Bytes(emulator); break;
         case 0x32: DEC_R1_R2(emulator, REGISTER_H, REGISTER_L); LOAD_8R_16BRR(emulator, REGISTER_A, REGISTER_H, REGISTER_L); break;
         case 0x33: emulator->rSP++; break;
         // case 0x34: 
     }
-
-    printRegisters(emulator);
 }
