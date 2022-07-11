@@ -10,6 +10,8 @@
 #define INC_R(e,r) write_to_reg(e, r, get_reg_byte(e,r) + 1);
 #define DEC_R(e,r) write_to_reg(e, r, get_reg_byte(e,r) - 1);
 #define LOAD_8B_R(e, r) write_to_reg(e, r, readByte(e));
+// get 16b address and write that with u8 byte from read address
+#define LOAD_u8_addr_u16(e, r1, r2) write_address(e, get_reg16(e, r1, r2), readByte(e)); 
 #define SET_FLAG_Z(e, v) set_flag(e, FLAG_Z, v == 0 ? 1 : 0);
 #define SET_FLAG_H_ADD(e, v1, v2) set_flag(e, FLAG_H, (((uint32_t)v1 & 0xf) + ((uint32_t)v2 & 0xf) > 0xf) ? 1 : 0);
 #define SET_FLAG_H_SUB(e, v1, v2) set_flag(e, FLAG_H, ((v1 & 0xf) - (v2 & 0xf) & 0x10) ? 1 : 0)
@@ -367,6 +369,43 @@ void dispatch_emulator(Emulator* emulator){
         case 0x31: emulator->rSP = read2Bytes(emulator); break;
         case 0x32: DEC_R1_R2(emulator, REGISTER_H, REGISTER_L); LOAD_8R_16BRR(emulator, REGISTER_A, REGISTER_H, REGISTER_L); break;
         case 0x33: emulator->rSP++; break;
-        // case 0x34: 
+        
+        case 0x34: {
+            // increment address in HL
+            uint16_t address = get_reg16(emulator, REGISTER_H, REGISTER_L);
+            uint8_t old = read_address(emulator, address);
+            uint8_t new = old + 1;
+
+            SET_FLAG_Z(emulator, new);
+            SET_FLAG_H_ADD16(emulator, old, 1);
+            set_flag(emulator, FLAG_N, 0);
+            write_address(emulator, address, new);
+
+            break;
+        }
+        
+        case 0x35: {
+            // opposite of 0x34 (decrement)
+            uint16_t address = get_reg16(emulator, REGISTER_H, REGISTER_L);
+            uint8_t old = read_address(emulator, address);
+            uint8_t new = old - 1;
+
+            SET_FLAG_Z(emulator, new);
+            SET_FLAG_H_ADD16(emulator, old, 1);
+            set_flag(emulator, FLAG_N, 0);
+            write_address(emulator, address, new);
+
+            break;
+        }
+        
+        case 0x36: LOAD_u8_addr_u16(emulator, REGISTER_H, REGISTER_L); break;
+        case 0x37: {
+            set_flag(emulator, FLAG_C, 1);
+            set_flag(emulator, FLAG_N, 0);
+            set_flag(emulator, FLAG_H, 0);
+            break;
+        }
+        case 0x38: JumpConditionRelative(emulator, C(emulator)); // JR C i8
+        
     }
 }
