@@ -3,15 +3,16 @@
 #include "debug.h"
 
 #define LOAD_16B_RR(e, r1, r2) set_reg16(e, read2Bytes(e), r1, r2);
-#define LOAD_8R_16BRR(e, r1, r2, r3) set_reg16(e, r2, r3, read_address(e, get_reg_byte(e, r1)));
-#define LOAD_16RB_R(e, r1, r2, r3) write_to_reg(e, read_address(e, get_reg16(e, r1, r2)), r3);
-#define LOAD_R_u8(e, r) write_to_reg(e, r, readByte(e));
+#define LOAD_8R_16BRR(e, r1, r2, r3) write_to_reg(e, r1, read_address(e, get_reg16(e, r2, r3)));
+#define LOAD_16RB_R(e, r1, r2, r3) write_address(e, get_reg16(e, r1, r2), get_reg_byte(e, r3));
 #define LOAD_R8_R8(e, r1, r2) write_to_reg(e, r1, get_reg_byte(e, r2));
+#define LOAD_8B_R(e, r) write_to_reg(e, r, readByte(e));
+
 #define INC_R1_R2(e, reg1, reg2) set_reg16(e, get_reg16(e, reg1, reg2) + 1, reg1, reg2);
 #define DEC_R1_R2(e, reg1, reg2) set_reg16(e, get_reg16(e, reg1, reg2) - 1, reg1, reg2);
 #define INC_R(e,r) write_to_reg(e, r, get_reg_byte(e,r) + 1);
 #define DEC_R(e,r) write_to_reg(e, r, get_reg_byte(e,r) - 1);
-#define LOAD_8B_R(e, r) write_to_reg(e, r, readByte(e));
+
 // get 16b address and write that with u8 byte from read address
 #define LOAD_u8_addr_u16(e, r1, r2) write_address(e, get_reg16(e, r1, r2), readByte(e)); 
 #define SET_FLAG_Z(e, v) set_flag(e, FLAG_Z, v == 0 ? 1 : 0);
@@ -95,7 +96,7 @@ static inline uint8_t get_flag(Emulator* emulator, FLAG flag){
     return (emulator->rF >> (flag + 4) & 1);
 }
 
-static uint16_t read_address(Emulator* emulator, uint16_t address){
+static uint8_t read_address(Emulator* emulator, uint16_t address){
     if (address >= 0x0000 && address <= 0x3FFF) {
         return emulator->cartridge.file[address];
     }
@@ -185,7 +186,7 @@ static void ccf(Emulator* emulator){
 }
 
 static void halt(Emulator* emulator){
-    
+
 }
 
 static void JumpConditionRelative(Emulator* emulator, bool condition){
@@ -437,7 +438,7 @@ void dispatch_emulator(Emulator* emulator){
         case 0x3B: emulator->rSP--;
         case 0x3C: increment_R_8(emulator, REGISTER_A); break;
         case 0x3D: decrement_R_8(emulator, REGISTER_A); break;
-        case 0x3E: LOAD_R_u8(emulator, REGISTER_A); break;
+        case 0x3E: LOAD_8B_R(emulator, REGISTER_A); break;
         case 0x3F: ccf(emulator); break;
         case 0x40: LOAD_R8_R8(emulator, REGISTER_B, REGISTER_B); break;
         case 0x41: LOAD_R8_R8(emulator, REGISTER_B, REGISTER_C); break;
