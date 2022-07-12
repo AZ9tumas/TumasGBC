@@ -184,6 +184,10 @@ static void ccf(Emulator* emulator){
     set_flag(emulator, FLAG_H, 0);
 }
 
+static void halt(Emulator* emulator){
+    
+}
+
 static void JumpConditionRelative(Emulator* emulator, bool condition){
     if (condition){
         emulator->rPC += (int8_t)readByte(emulator);
@@ -319,8 +323,8 @@ void dispatch_emulator(Emulator* emulator){
     switch (opcode)
     {   
         case 0x00: break;
-        case 0x01: LOAD_16B_RR(emulator, REGISTER_B, REGISTER_C) break; // LD BC,u16
-        case 0x02: LOAD_16RB_R(emulator, REGISTER_B, REGISTER_C, REGISTER_A) break; // LD (BC),A
+        case 0x01: LOAD_16B_RR(emulator, REGISTER_B, REGISTER_C); break; // LD BC,u16
+        case 0x02: LOAD_16RB_R(emulator, REGISTER_B, REGISTER_C, REGISTER_A); break; // LD (BC),A
         case 0x03: INC_R1_R2(emulator, REGISTER_B, REGISTER_C); break; // INC BC
         case 0x04: increment_R_8(emulator, REGISTER_B); break; // INC B
         case 0x05: decrement_R_8(emulator, REGISTER_B); break; // DEC B
@@ -460,6 +464,36 @@ void dispatch_emulator(Emulator* emulator){
         case 0x56: LOAD_8R_16BRR(emulator, REGISTER_D, REGISTER_H, REGISTER_L); break;
         case 0x57: LOAD_R8_R8(emulator, REGISTER_D, REGISTER_A); break;
         case 0x58: LOAD_R8_R8(emulator, REGISTER_E, REGISTER_B); break;
+        case 0x59: LOAD_R8_R8(emulator, REGISTER_E, REGISTER_C); break;
+        case 0x5A: LOAD_R8_R8(emulator, REGISTER_E, REGISTER_D); break;
+        case 0x5B: LOAD_R8_R8(emulator, REGISTER_E, REGISTER_E); break;
+        case 0x5C: LOAD_R8_R8(emulator, REGISTER_E, REGISTER_H); break;
+        case 0x5D: LOAD_R8_R8(emulator, REGISTER_E, REGISTER_L); break;
+        case 0x5E: LOAD_8R_16BRR(emulator, REGISTER_E, REGISTER_H, REGISTER_L); break;
+        case 0x5F: LOAD_R8_R8(emulator, REGISTER_E, REGISTER_A); break;
+        case 0x60: LOAD_R8_R8(emulator, REGISTER_H, REGISTER_B); break;
+        case 0x61: LOAD_R8_R8(emulator, REGISTER_H, REGISTER_C); break;
+        case 0x62: LOAD_R8_R8(emulator, REGISTER_H, REGISTER_D); break;
+        case 0x63: LOAD_R8_R8(emulator, REGISTER_H, REGISTER_E); break;
+        case 0x64: LOAD_R8_R8(emulator, REGISTER_H, REGISTER_H); break;
+        case 0x65: LOAD_R8_R8(emulator, REGISTER_H, REGISTER_L); break;
+        case 0x66: LOAD_8R_16BRR(emulator, REGISTER_H, REGISTER_H, REGISTER_L); break;
+        case 0x67: LOAD_R8_R8(emulator, REGISTER_H, REGISTER_A); break;
+        case 0x68: LOAD_R8_R8(emulator, REGISTER_L, REGISTER_B); break;
+        case 0x69: LOAD_R8_R8(emulator, REGISTER_L, REGISTER_C); break;
+        case 0x6A: LOAD_R8_R8(emulator, REGISTER_L, REGISTER_D); break;
+        case 0x6B: LOAD_R8_R8(emulator, REGISTER_L, REGISTER_E); break;
+        case 0x6C: LOAD_R8_R8(emulator, REGISTER_L, REGISTER_H); break;
+        case 0x6D: LOAD_R8_R8(emulator, REGISTER_L, REGISTER_L); break;
+        case 0x6E: LOAD_8R_16BRR(emulator, REGISTER_L, REGISTER_H, REGISTER_L); break;
+        case 0x6F: LOAD_R8_R8(emulator, REGISTER_L, REGISTER_A); break;
+        case 0x70: LOAD_16RB_R(emulator, REGISTER_H, REGISTER_L, REGISTER_B); break;
+        case 0x71: LOAD_16RB_R(emulator, REGISTER_H, REGISTER_L, REGISTER_C); break;
+        case 0x72: LOAD_16RB_R(emulator, REGISTER_H, REGISTER_L, REGISTER_D); break;
+        case 0x73: LOAD_16RB_R(emulator, REGISTER_H, REGISTER_L, REGISTER_E); break;
+        case 0x74: LOAD_16RB_R(emulator, REGISTER_H, REGISTER_L, REGISTER_H); break;
+        case 0x75: LOAD_16RB_R(emulator, REGISTER_H, REGISTER_L, REGISTER_L); break;
+        case 0x76: halt(emulator); break;
         
     }
 }
