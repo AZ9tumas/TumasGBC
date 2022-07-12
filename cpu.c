@@ -7,19 +7,20 @@
 #define LOAD_16RB_R(e, r1, r2, r3) write_address(e, get_reg16(e, r1, r2), get_reg_byte(e, r3));
 #define LOAD_R8_R8(e, r1, r2) write_to_reg(e, r1, get_reg_byte(e, r2));
 #define LOAD_8B_R(e, r) write_to_reg(e, r, readByte(e));
+// get 16b address and write that with u8 byte from read address
+#define LOAD_u8_addr_u16(e, r1, r2) write_address(e, get_reg16(e, r1, r2), readByte(e)); 
 
 #define INC_R1_R2(e, reg1, reg2) set_reg16(e, get_reg16(e, reg1, reg2) + 1, reg1, reg2);
 #define DEC_R1_R2(e, reg1, reg2) set_reg16(e, get_reg16(e, reg1, reg2) - 1, reg1, reg2);
 #define INC_R(e,r) write_to_reg(e, r, get_reg_byte(e,r) + 1);
 #define DEC_R(e,r) write_to_reg(e, r, get_reg_byte(e,r) - 1);
 
-// get 16b address and write that with u8 byte from read address
-#define LOAD_u8_addr_u16(e, r1, r2) write_address(e, get_reg16(e, r1, r2), readByte(e)); 
 #define SET_FLAG_Z(e, v) set_flag(e, FLAG_Z, v == 0 ? 1 : 0);
 #define SET_FLAG_H_ADD(e, v1, v2) set_flag(e, FLAG_H, (((uint32_t)v1 & 0xf) + ((uint32_t)v2 & 0xf) > 0xf) ? 1 : 0);
 #define SET_FLAG_H_SUB(e, v1, v2) set_flag(e, FLAG_H, ((v1 & 0xf) - (v2 & 0xf) & 0x10) ? 1 : 0)
 #define SET_FLAG_H_ADD16(e, v1, v2) set_flag(e, FLAG_H, (((uint32_t)v1 & 0xfff) + ((uint32_t)v2 & 0xfff) > 0xfff) ? 0 : 1)
 #define SET_FLAG_C_ADD16(e, v1, v2) set_flag(e, FLAG_C, ((uint32_t)(v1) + (uint32_t)(v2)) > 0xFFFF ? 1 : 0)
+
 #define JUMP(e, r, b) write_to_reg(e, r, get_reg_byte(e, r) + b);
 
 // Jump Condition Check ...
