@@ -496,6 +496,14 @@ void dispatch_emulator(Emulator* emulator){
         case 0x74: LOAD_16RB_R(emulator, REGISTER_H, REGISTER_L, REGISTER_H); break;
         case 0x75: LOAD_16RB_R(emulator, REGISTER_H, REGISTER_L, REGISTER_L); break;
         case 0x76: halt(emulator); break;
-        
+        case 0x77: LOAD_16RB_R(emulator, REGISTER_H, REGISTER_L, REGISTER_A); break;
+        case 0x78: LOAD_R8_R8(emulator, REGISTER_A, REGISTER_B); break;
+        case 0x79: LOAD_R8_R8(emulator, REGISTER_A, REGISTER_C); break;
+        case 0x7A: LOAD_R8_R8(emulator, REGISTER_A, REGISTER_D); break;
+        case 0x7B: LOAD_R8_R8(emulator, REGISTER_A, REGISTER_E); break;
+        case 0x7C: LOAD_R8_R8(emulator, REGISTER_A, REGISTER_H); break;
+        case 0x7D: LOAD_R8_R8(emulator, REGISTER_A, REGISTER_L); break;
+        case 0x7E: LOAD_8R_16BRR(emulator, REGISTER_A, REGISTER_H, REGISTER_L); break;
+        case 0x7F: LOAD_R8_R8(emulator, REGISTER_A, REGISTER_A); break;
     }
 }
