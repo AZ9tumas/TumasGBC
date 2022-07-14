@@ -25,12 +25,12 @@
 #define SET_FLAG_C_SUB(e, v1, v2) set_flag(e, FLAG_C, ((int)(v1) - (int)(v2)) < 0 ? 1 : 0)
 
 #define JUMP(e, r, b) write_to_reg(e, r, get_reg_byte(e, r) + b)
-#define JUMP_u16(e, u16) e->rPC=u16
+#define JUMP_u16(e, hex) e->rPC=hex
 #define JUMP_RR(e,r1,r2) e->rPC=get_reg16(e,r1,r2)
 
 #define POP_RR(e, r1, r2) set_reg16(e, pop16(e), r1, r2)
 #define PUSH_RR(e, r1, r2) push16(e, get_reg16(e, r1, r2))
-#define RST(e, u16) call(e, u16)
+#define RST(e, hex) call(e, hex)
 
 
 // Jump Condition Check ...
@@ -1000,7 +1000,7 @@ void dispatch_emulator(Emulator* emulator){
         case 0xC8: return_condition(emulator, Z(emulator)); break;
         case 0xC9: ret(emulator); break;
         case 0xCA: jumpCondition(emulator, Z(emulator)); break;
-        // ignoring prefix (sigh)
+    //  case 0xCB: prefix(emulator); break;
         case 0xCC: callCondition(emulator, read2Bytes(emulator), Z(emulator)); break;
         case 0xCD: call(emulator, read2Bytes(emulator)); break;
         case 0xCE: adc_u8(emulator, REGISTER_A); break;
@@ -1009,10 +1009,72 @@ void dispatch_emulator(Emulator* emulator){
         case 0xD0: return_condition(emulator, NC(emulator)); break;
         case 0xD1: POP_RR(emulator, REGISTER_D, REGISTER_E); break;
         case 0xD2: jumpCondition(emulator, NC(emulator)); break;
-        //:
         case 0xD4: callCondition(emulator, read2Bytes(emulator), NC(emulator)); break;
         case 0xD5: PUSH_RR(emulator, REGISTER_D, REGISTER_E); break;
         case 0xD6: sub_u8(emulator, REGISTER_A); break;
+        case 0xD7: RST(emulator, 0x10); break;
+        case 0xD8: return_condition(emulator, C(emulator)); break;
+        case 0xD9: ret(emulator); break;
+        case 0xDA: jumpCondition(emulator, CONDITION_C(emulator)); break;
+        case 0xDC: callCondition(emulator, read2Bytes(emulator), CONDITION_C(emulator)); break;
+        case 0xDE: sbc_u8(emulator, REGISTER_A); break;
+        case 0xDF: RST(emulator, 0x18); break;
+        
+        case 0xE0: write_address(emulator, 0xFF00 + readByte(emulator), get_reg_byte(emulator, REGISTER_A)); break;
+        case 0xE1: POP_RR(emulator, REGISTER_H, REGISTER_L); break;
+        case 0xE2: write_address(emulator, 0xFF00 + get_reg_byte(emulator, REGISTER_C), get_reg_byte(emulator, REGISTER_A)); break;
+        case 0xE5: PUSH_RR(emulator, REGISTER_H, REGISTER_L); break;
+        case 0xE6: and_u8(emulator, REGISTER_A); break;
+        case 0xE7: RST(emulator, 0x20); break;
+        case 0xE8: {
+            uint16_t old = emulator->rSP;
+            int8_t byte = (int8_t)readByte(emulator);
+            uint16_t result = old + byte;
+
+            emulator->rSP = result;
+
+            set_flag(emulator, FLAG_Z, 0);
+            set_flag(emulator, FLAG_N, 0);
+
+            old &= 0xFF;
+
+            SET_FLAG_H_ADD(emulator, old, (uint8_t)byte);
+            SET_FLAG_C_ADD(emulator, old, (uint8_t)byte);
+
+            break;
+        }
+        case 0xE9: JUMP_RR(emulator, REGISTER_H, REGISTER_L); break;
+        case 0xEA: write_address(emulator, read2Bytes(emulator), get_reg_byte(emulator, REGISTER_A)); break;
+        case 0xEE: xor_u8(emulator, REGISTER_A); break;
+        case 0xEF: RST(emulator, 0x28); break;
+        
+        case 0xF0: write_to_reg(emulator, REGISTER_A, 0xFF00 + readByte(emulator)); break;
+        case 0xF1: POP_RR(emulator, REGISTER_A, REGISTER_F); write_to_reg(emulator, REGISTER_F, get_reg_byte(emulator, REGISTER_F & 0xF0)); break;
+        case 0xF2: write_to_reg(emulator, REGISTER_A, 0xFF00 + get_reg_byte(emulator, REGISTER_C)); break;
+    //  case 0xF3: INTURREPT_DISABLE(emulator); break;
+        case 0xF5: PUSH_RR(emulator, REGISTER_A, REGISTER_F); break;
+        case 0xF6: or_u8(emulator, REGISTER_A); break;
+        case 0xF7: RST(emulator, 0x30); break;
+        case 0xF8: {
+            uint16_t old = emulator->rSP;
+            int8_t byte = (int8_t) readByte(emulator);
+            uint16_t final = set_reg16(emulator, old + byte, REGISTER_H, REGISTER_L);
+
+            set_flag(emulator, FLAG_Z, 0);
+            set_flag(emulator, FLAG_N, 0);
+
+            old &= 0xFF;
+
+            SET_FLAG_H_ADD(emulator, old, (uint8_t)byte);
+            SET_FLAG_C_ADD(emulator, old, (uint8_t)byte);
+
+            break;
+        }
+        case 0xF9: emulator->rSP = get_reg16(emulator, REGISTER_H, REGISTER_L); break;
+        case 0xFA: write_to_reg(emulator, REGISTER_A, read_address(emulator, read2Bytes(emulator))); break;
+    //  case 0xFB: INTURREPT_ENABLE(emulator); break;
+        case 0xFE: compare_u8(emulator, REGISTER_A); break;
+        case 0xFF: RST(emulator, 0x38); break;
 
         default:
         printf("ggs\n");
