@@ -350,7 +350,8 @@ void printInstruction(Emulator* emulator) {
 	printf("[%x|%x|%x|%x]", emulator->MEM[R_DIV], emulator->MEM[R_TIMA], emulator->MEM[R_TMA], emulator->MEM[R_TAC]);
 #endif
     printf(" %5s", "");
-  
+    printf("-> 0x%02x ", emulator->cartridge.file[emulator->rPC]);
+
     switch (emulator->cartridge.file[emulator->rPC]) {
         case 0x00: return simpleInstruction(emulator, "NOP");
         case 0x01: return d16(emulator, "LD BC, d16");
