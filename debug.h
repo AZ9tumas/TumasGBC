@@ -25,6 +25,7 @@
 #define DEBUG_SUPPORT_SLOW_EMULATION
 #endif
 
+void printFlags(Emulator* emulator);
 void printInstruction(Emulator* emulator);
 void printRegisters(Emulator* emulator);
 void printCBInstruction(Emulator* emulator, uint8_t byte);
