@@ -2,6 +2,8 @@
 #include "cpu.h"
 #include "debug.h"
 
+#include <time.h>
+
 #define LOAD_16B_RR(e, r1, r2) set_reg16(e, read2Bytes(e), r1, r2)
 #define LOAD_8R_16BRR(e, r1, r2, r3) write_to_reg(e, r1, read_address(e, get_reg16(e, r2, r3)))
 #define LOAD_16RB_R(e, r1, r2, r3) write_address(e, get_reg16(e, r1, r2), get_reg_byte(e, r3))
@@ -31,7 +33,8 @@
 #define POP_RR(e, r1, r2) set_reg16(e, pop16(e), r1, r2)
 #define PUSH_RR(e, r1, r2) push16(e, get_reg16(e, r1, r2))
 #define RST(e, hex) call(e, hex)
-
+#define IME(e) e->schedule_interrupt_enable = true
+#define IMD(e) e->IME = false
 
 // Jump Condition Check ...
 
@@ -40,6 +43,8 @@
 
 #define Z(e)  (get_flag(e, FLAG_Z) == 1)
 #define C(e)  (get_flag(e, FLAG_C) == 1)
+
+static void stop_halt(Emulator* emualtor);
 
 Emulator* initEmulator(Emulator* emulator){
     emulator->rA = 0x01;
@@ -53,19 +58,39 @@ Emulator* initEmulator(Emulator* emulator){
     emulator->rPC = 0x0100;
     emulator->rSP = 0xfffe;
 
+    emulator->schedule_halt_bug = false;
+    emulator->schedule_interrupt_enable = false;
+    stop_halt(emulator);
+
+    emulator->run = false;
+
+    emulator->clock = 0;
+    emulator->start_time_ticks = 0;
+    emulator->last_render_time = 0;
+
+    emulator->joypad_action_buffer = 0xF;
+    emulator->joypad_direction_buffer = 0xF;
+
+    emulator->IME = false;
+    emulator->IE = 0x00;
+    emulator->IF = 0x00;
+
     return emulator;
 }
 
+bool wrong = false;
 void startEmulator(Cartridge* cartridge, Emulator* emulator){
     printf("Dispatching Emulator\n\n");
 
     int i = 0;
     for (;;){
         i++;
-        printf(" == Dispatch no. %d == \n\n", i);
+        printf(" == Dispatch no. %d (0x%02x) == \n", i, emulator->cartridge.file[emulator->rPC]);
+        
         dispatch_emulator(emulator);
-
-        //if (i > 15) break;
+        
+        if (i > 99) break;
+        if (wrong) break;
     }
 }
 
@@ -110,10 +135,21 @@ static inline uint8_t get_flag(Emulator* emulator, FLAG flag){
     return (emulator->rF >> (flag + 4) & 1);
 }
 
+/*
+* 0x4000 - 0x7FFF uve got rom banking space for the file. That area is used for files greater than 32 KB. If the file is sized 64 KB, u can map the other 32 KB in that section. Otherwise u dont have to worry about bigger files till u implement an MBC which will be much later.
+* 0x8000 - 0x9FFF uve got video ram, which is literally just normal RAM but it is used by the lcd to know what to draw on the screen, u just allocate an array of size 0x2000 bytes and map it to that address
+* 0xA000 - 0xBFFF is for external ram, that again is part of the MBC which u dont have to worry about rn
+* 0xC000 - 0xCFFF is the the normal ram or work ram. Its the first section of it
+* 0xD000 - 0xDFFF is the second section of the work ram. U can allocate another array for work ram and map it to these 2 areas
+* 0xE000 - 0xFDFF u dont have to emulate this area at all
+* 0xFE00 - 0xFE9F Used for storing sprite data, which u dont have to worry about rn but u can still allocate an array of size 0xA0 and map it to this region
+* 0xFEA0 - 0xFEFF self explanatory, its not usable. So error if something tries to read or write from here
+* 0xFF00 - 0xFF7F IO registers, u can allocate an array of size 0x80 and give each slot to a register
+* 0xFF80 - 0xFFFE High Ram which is a type of ram located in the cpu itself. Again just a normal array
+*/
+
 static uint8_t read_address(Emulator* emulator, uint16_t address){
-    if (address >= 0x0000 && address <= 0x3FFF) {
-        return emulator->cartridge.file[address];
-    }
+    return emulator->cartridge.file[address];
 }
 
 static void write_address(Emulator* emulator, uint16_t address, uint8_t byte){
@@ -202,67 +238,17 @@ static void ccf(Emulator* emulator){
     set_flag(emulator, FLAG_H, 0);
 }
 
-static void halt(Emulator* emulator){
-
-}
-
 static void JumpConditionRelative(Emulator* emulator, bool condition){
     if (condition){
         emulator->rPC += (int8_t)readByte(emulator);
     }
 }
 
-// Rotates value to left, moves bit 7 to C flag and C flag's original value to bit 0
-static void RotateLeftCarryR8(Emulator* emulator, REGISTER_TYPE reg) {
-    uint8_t val = get_reg_byte(emulator, reg);
-    bool carry_flag = get_flag(emulator, FLAG_C);
-    uint8_t bit7 = val >> 7;
+  ////////////////////////////////////
+ ///////// ROTATE FUNCTIONS /////////
+////////////////////////////////////
 
-    val <<= 1;
-    val |= carry_flag;
-
-    write_to_reg(emulator, reg, val);
-
-    set_flag(emulator, FLAG_Z, 0);
-    set_flag(emulator, FLAG_H, 0);
-    set_flag(emulator, FLAG_N, 0);
-    set_flag(emulator, FLAG_C, bit7);
-}
-
-// Rotates value to right, moves bit 0 to C flag and C flag's original value to bit 7 
-static void RotateRightCarryR8(Emulator* emulator, REGISTER_TYPE reg){
-    uint8_t val = get_reg_byte(emulator, reg);
-    bool carry_flag = get_flag(emulator, FLAG_C);
-    uint8_t bit0 = val & 1;
-
-    val >>= 1;
-    val |= carry_flag << 7;
-
-    write_to_reg(emulator, reg, val);
-
-    set_flag(emulator, FLAG_Z, 0);
-    set_flag(emulator, FLAG_H, 0);
-    set_flag(emulator, FLAG_N, 0);
-    set_flag(emulator, FLAG_C, bit0);
-}
-
-
-static void rotateRightR8(Emulator* emulator, REGISTER_TYPE reg) {
-    uint8_t val = get_reg_byte(emulator, reg);
-    uint8_t bitno1 = val & 1;
-
-    val >>= 1;
-    val |= bitno1 << 7;
-
-    write_to_reg(emulator, reg, val);
-
-    set_flag(emulator, FLAG_Z, 0);
-    set_flag(emulator, FLAG_H, 0);
-    set_flag(emulator, FLAG_N, 0);
-    set_flag(emulator, FLAG_C, bitno1);
-}
-
-static void rotateLeftR8(Emulator* emulator, REGISTER_TYPE reg){
+static void rotateLeftR8(Emulator* emulator, REGISTER_TYPE reg, bool zflag){
     
     uint8_t val = get_reg_byte(emulator, reg);
     uint8_t bitno7 = val >> 7;
@@ -272,10 +258,265 @@ static void rotateLeftR8(Emulator* emulator, REGISTER_TYPE reg){
 
     write_to_reg(emulator, reg, val);
 
-    set_flag(emulator, FLAG_Z, 0);
+    if (zflag) {
+        SET_FLAG_Z(emulator, val);
+    } else {
+        set_flag(emulator, FLAG_Z, 0);
+    }
+
     set_flag(emulator, FLAG_H, 0);
     set_flag(emulator, FLAG_N, 0);
     set_flag(emulator, FLAG_C, bitno7);
+}
+
+// Rotates value to left, moves bit 7 to C flag and C flag's original value to bit 0
+static void RotateLeftCarryR8(Emulator* emulator, REGISTER_TYPE reg, bool zflag) {
+    uint8_t val = get_reg_byte(emulator, reg);
+    bool carry_flag = get_flag(emulator, FLAG_C);
+    uint8_t bit7 = val >> 7;
+
+    val <<= 1;
+    val |= carry_flag;
+
+    write_to_reg(emulator, reg, val);
+
+    if (zflag) {
+        SET_FLAG_Z(emulator, val);
+    } else {
+        set_flag(emulator, FLAG_Z, 0);
+    }
+
+    set_flag(emulator, FLAG_Z, 0);
+    set_flag(emulator, FLAG_H, 0);
+    set_flag(emulator, FLAG_N, 0);
+    set_flag(emulator, FLAG_C, bit7);
+}
+
+static void RotateLeftCarryR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2, bool zflag) {
+    uint16_t address = get_reg16(emulator, reg1, reg2);
+    uint8_t val = read_address(emulator, address);
+    bool carry_flag = get_flag(emulator, FLAG_C);
+    uint8_t bit7 = val >> 7;
+
+    val <<= 1;
+    val |= carry_flag;
+
+    write_address(emulator, address, val);
+
+    if (zflag) {
+        SET_FLAG_Z(emulator, val);
+    } else {
+        set_flag(emulator, FLAG_Z, 0);
+    }
+
+    set_flag(emulator, FLAG_Z, 0);
+    set_flag(emulator, FLAG_H, 0);
+    set_flag(emulator, FLAG_N, 0);
+    set_flag(emulator, FLAG_C, bit7);
+}
+
+static void rotateLeftR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2, bool zflag){
+    
+    uint16_t address = get_reg16(emulator, reg1, reg2);
+    uint8_t val = read_address(emulator, address);
+    uint8_t bitno7 = val >> 7;
+
+    val <<= 1;
+    val |= bitno7;
+
+    write_address(emulator, address, val);
+
+    if (zflag) {
+        SET_FLAG_Z(emulator, val);
+    } else {
+        set_flag(emulator, FLAG_Z, 0);
+    }
+
+    set_flag(emulator, FLAG_H, 0);
+    set_flag(emulator, FLAG_N, 0);
+    set_flag(emulator, FLAG_C, bitno7);
+}
+
+static void rotateRightR8(Emulator* emulator, REGISTER_TYPE reg, bool zflag) {
+    uint8_t val = get_reg_byte(emulator, reg);
+    uint8_t bitno1 = val & 1;
+
+    val >>= 1;
+    val |= bitno1 << 7;
+
+    write_to_reg(emulator, reg, val);
+
+    if (zflag) {
+        SET_FLAG_Z(emulator, val);
+    } else {
+        set_flag(emulator, FLAG_Z, 0);
+    }
+
+    set_flag(emulator, FLAG_Z, 0);
+    set_flag(emulator, FLAG_H, 0);
+    set_flag(emulator, FLAG_N, 0);
+    set_flag(emulator, FLAG_C, bitno1);
+}
+
+// Rotates value to right, moves bit 0 to C flag and C flag's original value to bit 7 
+static void RotateRightCarryR8(Emulator* emulator, REGISTER_TYPE reg, bool zflag){
+    uint8_t val = get_reg_byte(emulator, reg);
+    bool carry_flag = get_flag(emulator, FLAG_C);
+    uint8_t bit0 = val & 1;
+
+    val >>= 1;
+    val |= carry_flag << 7;
+
+    write_to_reg(emulator, reg, val);
+
+    if (zflag) {
+        SET_FLAG_Z(emulator, val);
+    } else {
+        set_flag(emulator, FLAG_Z, 0);
+    }
+
+    set_flag(emulator, FLAG_Z, 0);
+    set_flag(emulator, FLAG_H, 0);
+    set_flag(emulator, FLAG_N, 0);
+    set_flag(emulator, FLAG_C, bit0);
+}
+
+static void RotateRightCarryR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2, bool zflag){
+    uint16_t address = get_reg16(emulator, reg1, reg2);
+    uint8_t val = read_address(emulator, address);
+    bool carry_flag = get_flag(emulator, FLAG_C);
+    uint8_t bit0 = val & 1;
+
+    val >>= 1;
+    val |= carry_flag << 7;
+
+    write_address(emulator, address, val);
+
+    if (zflag) {
+        SET_FLAG_Z(emulator, val);
+    } else {
+        set_flag(emulator, FLAG_Z, 0);
+    }
+
+    set_flag(emulator, FLAG_Z, 0);
+    set_flag(emulator, FLAG_H, 0);
+    set_flag(emulator, FLAG_N, 0);
+    set_flag(emulator, FLAG_C, bit0);
+}
+
+static void rotateRightR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2, bool zflag) {
+    uint16_t address = get_reg16(emulator, reg1, reg2);
+    uint8_t val = read_address(emulator, address);
+    uint8_t bitno1 = val & 1;
+
+    val >>= 1;
+    val |= bitno1 << 7;
+
+    write_address(emulator, address, val);
+
+    if (zflag) {
+        SET_FLAG_Z(emulator, val);
+    } else {
+        set_flag(emulator, FLAG_Z, 0);
+    }
+
+    set_flag(emulator, FLAG_Z, 0);
+    set_flag(emulator, FLAG_H, 0);
+    set_flag(emulator, FLAG_N, 0);
+    set_flag(emulator, FLAG_C, bitno1);
+}
+
+  //////////////////////////////////////////////
+ ///////// SHIFT ARITHMETIC FUNCTIONS /////////
+//////////////////////////////////////////////
+
+static void shiftLeftArithmeticR8(Emulator* emulator, REGISTER_TYPE reg){
+    uint8_t reg_val = get_reg_byte(emulator, reg);
+    uint8_t bit7 = reg_val >> 7;
+    uint8_t result = reg_val << 1;
+
+    write_to_reg(emulator, reg, result);
+
+    SET_FLAG_Z(emulator, result);
+    set_flag(emulator, FLAG_H, 0);
+    set_flag(emulator, FLAG_N, 0);
+    set_flag(emulator, FLAG_C, bit7);
+}
+
+static void shiftLeftArithmeticR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2){
+    uint16_t address = get_reg16(emulator, reg1, reg2);
+    uint8_t reg_val = read_address(emulator, address);
+    uint8_t bit7 = reg_val >> 7;
+    uint8_t result = reg_val << 1;
+
+    write_address(emulator, address, result);
+
+    SET_FLAG_Z(emulator, result);
+    set_flag(emulator, FLAG_H, 0);
+    set_flag(emulator, FLAG_N, 0);
+    set_flag(emulator, FLAG_C, bit7);
+}
+
+static void shiftRightArithmeticR8(Emulator* emulator, REGISTER_TYPE reg){
+    uint8_t value = get_reg_byte(emulator, reg);
+    uint8_t bit7 = value >> 7;
+    uint8_t bit0 = value & 0x1;
+    uint8_t result = value >> 1;
+
+    result |= bit7 << 7;
+    write_to_reg(emulator, reg, result);
+
+    SET_FLAG_Z(emulator, result);
+    set_flag(emulator, FLAG_H, 0);
+    set_flag(emulator, FLAG_N, 0);
+    set_flag(emulator, FLAG_C, bit0);
+}
+
+static void shiftRightArithmeticR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2){
+    uint16_t address = get_reg16(emulator, reg1, reg2);
+    uint8_t value = read_address(emulator, address);
+    uint8_t bit7 = value >> 7;
+    uint8_t bit0 = value & 0x1;
+    uint8_t result = value >> 1;
+
+    result |= bit7 << 7;
+    write_address(emulator, address, result);
+
+    SET_FLAG_Z(emulator, result);
+    set_flag(emulator, FLAG_H, 0);
+    set_flag(emulator, FLAG_N, 0);
+    set_flag(emulator, FLAG_C, bit0);
+}
+
+  /////////////////////////////////////////////////
+ ///////// SHIFT RIGHT LOGICAL FUNCTIONS /////////
+/////////////////////////////////////////////////
+
+static void shiftRightLogicalR8(Emulator* emulator, REGISTER_TYPE reg){
+    uint8_t value = get_reg_byte(emulator, reg);
+    uint8_t bit1 = value & 0x1;
+    uint8_t result = value >> 1;
+
+    write_to_reg(emulator, reg, result);
+    
+    SET_FLAG_Z(emulator, result);
+    set_flag(emulator, FLAG_H, 0);
+    set_flag(emulator, FLAG_N, 0);
+    set_flag(emulator, FLAG_C, bit1);
+}
+
+static void shiftRightLogicalR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2){
+    uint16_t address = get_reg16(emulator, reg1, reg2);
+    uint8_t value = read_address(emulator, address);
+    uint8_t bit1 = value & 0x1;
+    uint8_t result = value >> 1;
+
+    write_address(emulator, address, result);
+
+    SET_FLAG_Z(emulator, result);
+    set_flag(emulator, FLAG_H, 0);
+    set_flag(emulator, FLAG_N, 0);
+    set_flag(emulator, FLAG_C, bit1);
 }
 
 static void addRR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2, REGISTER_TYPE reg3, REGISTER_TYPE reg4){
@@ -695,42 +936,155 @@ static void callCondition(Emulator* emulator, uint16_t address, bool condition){
     }
 }
 
-/*Rotate is a binary operation
-* The bytes can be represented in binary so 234 in binary is 11101010
-* If u do a rotate operation on 234, it's gonna rotate or move the bits in a particular direction
-* For example if u rotate 234 towards the right, it's gonna move the bit that's first to the second place, second to third and so on. It will move the eighth bit back to the first place 
-* That's why it's called rotate because it treats it like a circle and wraps it around
-* So rotating 234 to the right will turn 11101010 to 01110101
-* The bits moved to the right by 1 place and the last one moved to the place of the first. 
-* 01110101 is 117 in decimal
-* So if u have 234 in A, u execute RR A or rotate right A, it will store 117 in A
-* RRCA is just the normal rotate instruction but it only operates on the A register, and it stores the last bit to the carry flag. So if the last bit was 1 which rotated to the first place, it's gonna do the rotation but also store the bit in the C flag
-* Similarly you can rotate it to the left too
-* So rotating 234 to left will do this 11101010 -> 11010101
-* The bits moved to the left by one place 
-* And the first bit went to the last position
-* So that will give u 213 in decimal
-* RLCA does the same additional stuff as RRCA
-* Store the bit that wrapped around in the C flag
-* Now u don't have to sit and convert this to binary and then back to decimal when implementing this
-* Binary operators already exist that let u operate on individual bits
-* C has a 'shift' operator which shifts the bits to right or left
-* But that doesn't do the complete work as it still doesn't wrap around the bits
-* It fills the new space with a 0 instead
-So for example 234 << 1 will do 11101010 -> 11010100
-* It shifted them to the left by 1 place but just filled the new bit at the end with a 0 
-* Ull have to read the first bit manually before shifting, in that case it's 1. Then u use the shift operator. Then u insert that bit u read in the last place to complete the rotate operation.
-* Additionally u would also store the bit u read in the C flag
-* If it's RLCA
-*/
+static bool checkIME(Emulator* emulator, uint8_t IE, uint8_t IF){
+    if ((IE & IF & 0x1F) == 0) {
+        printf("=== HALTING EMULATOR ===\n");
+        emulator->haltMode = true;
+        
+        return true;
+    }
+    return false;
+}
+
+static void dispatch_interrupt(Emulator* emulator, INTERRUPT interrupt){
+    printf("Dispatching interrupt\n");
+    IMD(emulator);
+
+    emulator->IF &= ~(1 << interrupt);
+
+    switch (interrupt)
+    {
+        case INTERRUPT_VBLANK:      printf("-> INTERRUPT_VBLANK\n");    call(emulator, 0x40); break;
+        case INTERRUPT_LCD_STAT:    printf("-> INTERRUPT_LCD_STAT\n");  call(emulator, 0x48); break;
+        case INTERRUPT_TIMER:       printf("-> INTERRUPT_TIMER\n");     call(emulator, 0x50); break;
+        case INTERRUPT_SERIAL:      printf("-> INTERRUPT_SERIAL\n");    call(emulator, 0x58); break;
+        case INTERRUPT_JOYPAD:      printf("-> INTERRUPT_JOYPAD\n");    call(emulator, 0x60); break;
+        default:                                                                              break;
+    }
+}
+
+static void halt(Emulator* emulator){
+    uint8_t IE = emulator->IE;
+    uint8_t IF = emulator->IF;
+
+    if (emulator->IME){
+        checkIME(emulator, IE, IF);
+        return;
+    } else {
+        if (!checkIME(emulator, IE, IF)){
+            emulator->schedule_halt_bug = true;
+            printf("Recreating the halt bug ...\n");
+        }
+
+    }
+}
+
+static void stop_halt(Emulator* emulator){
+    printf("=== +SUCCESSFULLY EXITED HALT MODE+ ===\n");
+    emulator->haltMode = false;
+}
+
+static void handleInterrupts(Emulator* emulator){
+    printf("=> Handling interrupts \n");
+    uint8_t IE = emulator->IE; // enabled interrupts
+    uint8_t IF = emulator->IF; // requested interrupts
+
+    if (emulator->IME){
+        printf("INTERRUPT: MASTER ENABLED\n");
+
+        if ((IE & IF & 0x1F) != 0){
+
+            stop_halt(emulator);
+
+            // There has been atleast 1 interrupt enabled
+
+            for (int i = 0; i < 5; i++){
+                printf("interrupt no. %d\n", i);
+
+                uint8_t requestBit = (IE >> i) & 0x1;
+                uint8_t enabledBit = (IF >> i) & 0x1;
+
+                if (requestBit && enabledBit) {
+                    // dispatch the highest priorty interrupt 'i'
+                    dispatch_interrupt(emulator, i);
+                    return;
+                }
+            }
+        } else {
+            printf("But (IE & IF & 0x1F) == 0\n\n");
+        }
+    } else {
+        if ((IE & IF & 0x1F) != 0) {
+            printf("IME is disabled, so exiting halt ... \n\n");
+            stop_halt(emulator);
+        }
+        printf("\n");
+    }
+}
+
+static void prefixCB(Emulator* emulator){
+    uint8_t byte = readByte(emulator);
+
+    switch (byte)
+    {
+        case 0x00: rotateLeftR8(emulator, REGISTER_B, true); break;
+        case 0x01: rotateLeftR8(emulator, REGISTER_C, true); break;
+        case 0x02: rotateLeftR8(emulator, REGISTER_D, true); break;
+        case 0x03: rotateLeftR8(emulator, REGISTER_E, true); break;
+        case 0x04: rotateLeftR8(emulator, REGISTER_H, true); break;
+        case 0x05: rotateLeftR8(emulator, REGISTER_L, true); break;
+        case 0x06: rotateLeftR16(emulator, REGISTER_H, REGISTER_L, true); break;
+        case 0x07: rotateLeftR8(emulator, REGISTER_A, true); break;
+        case 0x08: rotateRightR8(emulator, REGISTER_B, true); break;
+        case 0x09: rotateRightR8(emulator, REGISTER_C, true); break;
+        case 0x0A: rotateRightR8(emulator, REGISTER_D, true); break;
+        case 0x0B: rotateRightR8(emulator, REGISTER_E, true); break;
+        case 0x0C: rotateRightR8(emulator, REGISTER_H, true); break;
+        case 0x0D: rotateRightR8(emulator, REGISTER_L, true); break;
+        case 0x0E: rotateRightR16(emulator, REGISTER_H, REGISTER_L, true); break;
+        case 0x0F: rotateRightR8(emulator, REGISTER_A, true); break;
+        case 0x10: RotateLeftCarryR8(emulator, REGISTER_B, true); break;
+        case 0x11: RotateLeftCarryR8(emulator, REGISTER_C, true); break;
+        case 0x12: RotateLeftCarryR8(emulator, REGISTER_D, true); break;
+        case 0x13: RotateLeftCarryR8(emulator, REGISTER_E, true); break;
+        case 0x14: RotateLeftCarryR8(emulator, REGISTER_H, true); break;
+        case 0x15: RotateLeftCarryR8(emulator, REGISTER_L, true); break;
+        case 0x16: RotateLeftCarryR16(emulator, REGISTER_H, REGISTER_L, true); break;
+        case 0x17: RotateLeftCarryR8(emulator, REGISTER_A, true); break;
+        case 0x18: RotateRightCarryR8(emulator, REGISTER_B, true); break;
+        case 0x19: RotateRightCarryR8(emulator, REGISTER_C, true); break;
+        case 0x1A: RotateRightCarryR8(emulator, REGISTER_D, true); break;
+        case 0x1B: RotateRightCarryR8(emulator, REGISTER_E, true); break;
+        case 0x1C: RotateRightCarryR8(emulator, REGISTER_H, true); break;
+        case 0x1D: RotateRightCarryR8(emulator, REGISTER_L, true); break;
+        case 0x1E: RotateRightCarryR16(emulator, REGISTER_H, REGISTER_L, true); break;
+        case 0x1F: RotateRightCarryR8(emulator, REGISTER_A, true); break;
+    default: break;
+    }
+}
 
 void dispatch_emulator(Emulator* emulator){
-    uint8_t opcode = read_address(emulator, emulator->rPC);
+    uint8_t opcode = 0;
     
+    if (emulator->schedule_interrupt_enable == true){
+        emulator->IME = true;
+        emulator->schedule_interrupt_enable = false;
+        printf("INTURREPTS ENABLED");
+    }
 
-    printf("| Instruction Details:");
+    if (emulator->haltMode == true){
+        printf("HALTING EMULATOR\n");
+        goto skip;
+    } else if (emulator->schedule_halt_bug == true) {
+        opcode = readByte(emulator);
+        emulator->rPC--;
+        printf("HALT BUG SCHEDULED\n");
+    } else {
+        opcode = read_address(emulator, emulator->rPC);
+    }
+
+    printf("\t0x%02x| Instruction Details:", opcode);
     printInstruction(emulator);
-    printf("\n\n");
 
     emulator->rPC ++;
 
@@ -743,7 +1097,7 @@ void dispatch_emulator(Emulator* emulator){
         case 0x04: increment_R_8(emulator, REGISTER_B); break; // INC B
         case 0x05: decrement_R_8(emulator, REGISTER_B); break; // DEC B
         case 0x06: LOAD_8B_R(emulator, REGISTER_B); break; // LD B,u8
-        case 0x07: rotateLeftR8(emulator, REGISTER_A); break; // RLC_ REG A
+        case 0x07: rotateLeftR8(emulator, REGISTER_A, true); break; // RLC_ REG A
         case 0x08: {
             uint16_t two_bytes = read2Bytes(emulator);
             uint16_t SP_VAL = emulator->rSP;
@@ -758,7 +1112,7 @@ void dispatch_emulator(Emulator* emulator){
         case 0x0C: increment_R_8(emulator, REGISTER_C);break;
         case 0x0D: decrement_R_8(emulator, REGISTER_C); break;
         case 0x0E: LOAD_8B_R(emulator, REGISTER_C); break;
-        case 0x0F: rotateRightR8(emulator, REGISTER_A); break;
+        case 0x0F: rotateRightR8(emulator, REGISTER_A, false); break;
         
         case 0x10: break; // STOP (stops cpu)
         case 0x11: LOAD_16B_RR(emulator, REGISTER_D, REGISTER_E);break;
@@ -767,7 +1121,7 @@ void dispatch_emulator(Emulator* emulator){
         case 0x14: increment_R_8(emulator, REGISTER_D); break;
         case 0x15: decrement_R_8(emulator, REGISTER_D); break;
         case 0x16: LOAD_8B_R(emulator, REGISTER_D); break;
-        case 0x17: RotateLeftCarryR8(emulator, REGISTER_A); break;
+        case 0x17: RotateLeftCarryR8(emulator, REGISTER_A, false); break;
         case 0x18: emulator->rPC += (uint8_t)readByte(emulator); break; // JR i8
         case 0x19: addRR16(emulator, REGISTER_H, REGISTER_L, REGISTER_D, REGISTER_E); break;
         case 0x1A: LOAD_8R_16BRR(emulator, REGISTER_A, REGISTER_D, REGISTER_E); break;
@@ -775,7 +1129,7 @@ void dispatch_emulator(Emulator* emulator){
         case 0x1C: increment_R_8(emulator, REGISTER_E); break;
         case 0x1D: decrement_R_8(emulator, REGISTER_E); break;
         case 0x1E: LOAD_8B_R(emulator, REGISTER_E); break;
-        case 0x1F: RotateRightCarryR8(emulator, REGISTER_A); break;
+        case 0x1F: RotateRightCarryR8(emulator, REGISTER_A, false); break;
         
         case 0x20: JumpConditionRelative(emulator, NZ(emulator)); break; // JR NZ i8
         case 0x21: LOAD_16B_RR(emulator, REGISTER_H, REGISTER_L); break;
@@ -910,7 +1264,7 @@ void dispatch_emulator(Emulator* emulator){
         case 0x73: LOAD_16RB_R(emulator, REGISTER_H, REGISTER_L, REGISTER_E); break;
         case 0x74: LOAD_16RB_R(emulator, REGISTER_H, REGISTER_L, REGISTER_H); break;
         case 0x75: LOAD_16RB_R(emulator, REGISTER_H, REGISTER_L, REGISTER_L); break;
-        case 0x76: halt(emulator); break;
+        case 0x76: printf("halt?\n"); halt(emulator); break;
         case 0x77: LOAD_16RB_R(emulator, REGISTER_H, REGISTER_L, REGISTER_A); break;
         case 0x78: LOAD_R8_R8(emulator, REGISTER_A, REGISTER_B); break;
         case 0x79: LOAD_R8_R8(emulator, REGISTER_A, REGISTER_C); break;
@@ -986,7 +1340,7 @@ void dispatch_emulator(Emulator* emulator){
         case 0xBB: compare_R(emulator, REGISTER_A, REGISTER_E); break;
         case 0xBC: compare_R(emulator, REGISTER_A, REGISTER_H); break;
         case 0xBD: compare_R(emulator, REGISTER_A, REGISTER_L); break;
-        case 0xBE: compare_R(emulator, REGISTER_A, REGISTER_H, REGISTER_L); break;
+        case 0xBE: compareR_RR(emulator, REGISTER_A, REGISTER_H, REGISTER_L); break;
         case 0xBF: compare_R(emulator, REGISTER_A, REGISTER_A); break;
 
         case 0xC0: return_condition(emulator, NZ(emulator)); break;
@@ -1000,7 +1354,7 @@ void dispatch_emulator(Emulator* emulator){
         case 0xC8: return_condition(emulator, Z(emulator)); break;
         case 0xC9: ret(emulator); break;
         case 0xCA: jumpCondition(emulator, Z(emulator)); break;
-    //  case 0xCB: prefix(emulator); break;
+        case 0xCB: prefixCB(emulator); break;
         case 0xCC: callCondition(emulator, read2Bytes(emulator), Z(emulator)); break;
         case 0xCD: call(emulator, read2Bytes(emulator)); break;
         case 0xCE: adc_u8(emulator, REGISTER_A); break;
@@ -1015,8 +1369,8 @@ void dispatch_emulator(Emulator* emulator){
         case 0xD7: RST(emulator, 0x10); break;
         case 0xD8: return_condition(emulator, C(emulator)); break;
         case 0xD9: ret(emulator); break;
-        case 0xDA: jumpCondition(emulator, CONDITION_C(emulator)); break;
-        case 0xDC: callCondition(emulator, read2Bytes(emulator), CONDITION_C(emulator)); break;
+        case 0xDA: jumpCondition(emulator, C(emulator)); break;
+        case 0xDC: callCondition(emulator, read2Bytes(emulator), C(emulator)); break;
         case 0xDE: sbc_u8(emulator, REGISTER_A); break;
         case 0xDF: RST(emulator, 0x18); break;
         
@@ -1051,7 +1405,7 @@ void dispatch_emulator(Emulator* emulator){
         case 0xF0: write_to_reg(emulator, REGISTER_A, 0xFF00 + readByte(emulator)); break;
         case 0xF1: POP_RR(emulator, REGISTER_A, REGISTER_F); write_to_reg(emulator, REGISTER_F, get_reg_byte(emulator, REGISTER_F & 0xF0)); break;
         case 0xF2: write_to_reg(emulator, REGISTER_A, 0xFF00 + get_reg_byte(emulator, REGISTER_C)); break;
-    //  case 0xF3: INTURREPT_DISABLE(emulator); break;
+        case 0xF3: IMD(emulator); break;
         case 0xF5: PUSH_RR(emulator, REGISTER_A, REGISTER_F); break;
         case 0xF6: or_u8(emulator, REGISTER_A); break;
         case 0xF7: RST(emulator, 0x30); break;
@@ -1072,11 +1426,21 @@ void dispatch_emulator(Emulator* emulator){
         }
         case 0xF9: emulator->rSP = get_reg16(emulator, REGISTER_H, REGISTER_L); break;
         case 0xFA: write_to_reg(emulator, REGISTER_A, read_address(emulator, read2Bytes(emulator))); break;
-    //  case 0xFB: INTURREPT_ENABLE(emulator); break;
+        case 0xFB: IME(emulator); break;
         case 0xFE: compare_u8(emulator, REGISTER_A); break;
         case 0xFF: RST(emulator, 0x38); break;
 
         default:
-        printf("ggs\n");
+            printf("\tNot implemented this opcode !!!\n\n");
+            // wrong = true;
+            return;
     }
+    printf("\t");
+    printRegisters(emulator);
+
+    printf("\t");
+    printFlags(emulator);
+    
+skip:
+    handleInterrupts(emulator);
 }
