@@ -23,13 +23,13 @@ static uint16_t read2Bytes(Emulator* emulator) {
     return D16;
 }
 
-static void printFlags(Emulator* emulator) {
+void printFlags(Emulator* emulator) {
     uint8_t flagState = emulator->rF;
     
-    printf("[Z%d", flagState >> 7);
-    printf(" N%d", (flagState >> 6) & 1);
-    printf(" H%d", (flagState >> 5) & 1);
-    printf(" C%d]", (flagState >> 4) & 1);
+    printf("F: | Z -> %d | ", flagState >> 7);
+    printf("N -> %d | ", (flagState >> 6) & 1);
+    printf("H -> %d | ", (flagState >> 5) & 1);
+    printf("C -> %d | ", (flagState >> 4) & 1);
 }
 
 static void simpleInstruction(Emulator* emulator, char* ins) {
@@ -332,23 +332,7 @@ void printCBInstruction(Emulator* emulator, uint8_t byte) {
 }
 
 void printInstruction(Emulator* emulator) {
-#ifdef DEBUG_PRINT_ADDRESS
-    printf("[0x%04x]", emulator->PC);
-#endif
-#ifdef DEBUG_PRINT_FLAGS
-    printFlags(emulator);
-#endif
-#ifdef DEBUG_PRINT_CYCLES
-	/* We print t-cycles */
-    printf("[%ld]", emulator->clock * 4);
-#endif
-#ifdef DEBUG_PRINT_JOYPAD_REG
-    printf("[sel:%x|", (emulator->MEM[R_P1_JOYP] >> 4) & 0x3);
-    printf("sig:%x]", (emulator->MEM[R_P1_JOYP] & 0b00001111));
-#endif
-#ifdef DEBUG_PRINT_TIMERS
-	printf("[%x|%x|%x|%x]", emulator->MEM[R_DIV], emulator->MEM[R_TIMA], emulator->MEM[R_TMA], emulator->MEM[R_TAC]);
-#endif
+
     printf(" %5s", "");
     printf("-> 0x%02x ", emulator->cartridge.file[emulator->rPC]);
 
@@ -603,8 +587,8 @@ void printInstruction(Emulator* emulator) {
 }
 
 void printRegisters(Emulator* emulator) {
-    printf("Registers: [A %02x|B %02x|C %02x|D %02x|E %02x|H %02x|L %02x|SP %04x]\n\n", 
+    printf("R: A -> 0x%02x | B -> 0x%02x | C -> 0x%02x | D -> 0x%02x | E -> 0x%02x | H -> 0x%02x | L -> 0x%02x | SP -> 0x%04x | PC: 0x%04x\n", 
             emulator->rA, emulator->rB, emulator->rC,
             emulator->rD, emulator->rE, emulator->rH,
-            emulator->rL, (uint16_t)(emulator->rSP << 8) + emulator->rSP);
+            emulator->rL, (uint16_t)(emulator->rSP << 8) + emulator->rSP, emulator->rPC);
 }
