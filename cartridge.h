@@ -91,8 +91,8 @@ typedef struct {
     char title[11];                 // 11 character long title
     char manufacturerCode[4];       // 4 character long manufacturer code
 
-    LICENCEE_CODE lCode;            // umm, it's just the license code
-    CARTRIDGE_TYPE cType;           // ez? just the cartridge type, thass allll
+    LICENCEE_CODE lCode;            // license code
+    CARTRIDGE_TYPE cType;           // cartridge type
     ROM_SIZE romSize;               // ROM size
     RAM_SIZE extRamSize;            // External RAM size
     DEST_CODE dCode;                // Destination code (inside japan or not)
