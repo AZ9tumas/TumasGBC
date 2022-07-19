@@ -44,6 +44,8 @@
 #define Z(e)  (get_flag(e, FLAG_Z) == 1)
 #define C(e)  (get_flag(e, FLAG_C) == 1)
 
+#define INTERRUPT_REQ(IE, IF) ((IE & IF & 0x1F) != 0)
+
 static void stop_halt(Emulator* emualtor);
 
 Emulator* initEmulator(Emulator* emulator){
@@ -88,41 +90,41 @@ void startEmulator(Cartridge* cartridge, Emulator* emulator){
         printf(" == Dispatch no. %d (0x%02x) == \n", i, emulator->cartridge.file[emulator->rPC]);
         
         dispatch_emulator(emulator);
-        
-        if (i > 99) break;
+	
+	    if (i > 1000) break;
         if (wrong) break;
     }
 }
 
 static void write_to_reg(Emulator* emulator, REGISTER_TYPE reg, uint8_t byte){
     switch (reg){
-        case REGISTER_A: emulator->rA = byte;
-        case REGISTER_F: emulator->rF = byte;
+        case REGISTER_A: emulator->rA = byte; break;
+        case REGISTER_F: emulator->rF = byte; break;
 
-        case REGISTER_B: emulator->rB = byte;
-        case REGISTER_C: emulator->rC = byte;
+        case REGISTER_B: emulator->rB = byte; break;
+        case REGISTER_C: emulator->rC = byte; break;
 
-        case REGISTER_D: emulator->rD = byte;
-        case REGISTER_E: emulator->rE = byte;
+        case REGISTER_D: emulator->rD = byte; break;
+        case REGISTER_E: emulator->rE = byte; break;
 
-        case REGISTER_H: emulator->rH = byte;
-        case REGISTER_L: emulator->rL = byte;
+        case REGISTER_H: emulator->rH = byte; break;
+        case REGISTER_L: emulator->rL = byte; break;
     }
 }
 
 static uint8_t get_reg_byte(Emulator* emulator, REGISTER_TYPE reg){
     switch (reg){
-        case REGISTER_A: return emulator->rA;
-        case REGISTER_F: return emulator->rF;
+        case REGISTER_A: return emulator->rA; break;
+        case REGISTER_F: return emulator->rF; break;
 
-        case REGISTER_B: return emulator->rB;
-        case REGISTER_C: return emulator->rC;
+        case REGISTER_B: return emulator->rB; break;
+        case REGISTER_C: return emulator->rC; break;
 
-        case REGISTER_D: return emulator->rD;
-        case REGISTER_E: return emulator->rE;
+        case REGISTER_D: return emulator->rD; break;
+        case REGISTER_E: return emulator->rE; break;
 
-        case REGISTER_H: return emulator->rH;
-        case REGISTER_L: return emulator->rL;
+        case REGISTER_H: return emulator->rH; break;
+        case REGISTER_L: return emulator->rL; break;
     }
 }
 
@@ -149,12 +151,49 @@ static inline uint8_t get_flag(Emulator* emulator, FLAG flag){
 */
 
 static uint8_t read_address(Emulator* emulator, uint16_t address){
-    return emulator->cartridge.file[address];
+    if (address >= 0x0000 && address <= 0x3FFF)                 return emulator->cartridge.file[address];
+    if (address >= 0x4000 && address <= 0x7FFF)                 return emulator->cartridge.file[address];
+    if (address >= VRAM_N0_8KB && address <= VRAM_N0_8KB_END)   return emulator->VRAM[address - VRAM_N0_8KB];
+    if (address >= WRAM_N0_4KB && address <= WRAM_N0_4KB_END)   return emulator->WRAM1[address - WRAM_N0_4KB];
+    if (address >= WRAM_NN_4KB && address <= WRAM_NN_4KB_END)   return emulator->WRAM2[address - WRAM_NN_4KB];
+    if (address >= HRAM_N0 && address <= HRAM_N0_END)           return emulator->HRAM[address - HRAM_N0];
+    return 0xFF;
 }
 
 static void write_address(Emulator* emulator, uint16_t address, uint8_t byte){
-    if (address >= 0x0000 && address <= 0x3FFF){
-        emulator->cartridge.file = &byte;
+    printf("\tW 0x%02x -> 0x%04x\n", byte, address);
+    if ((address >= ECHO_N0_8KB && address <= ECHO_N0_8KB_END) || (address >= UNUSABLE_N0 && address <= UNUSABLE_N0_END)) {
+        printf("\n\t<== WARNING ==> ATTEMPT TO WRITE TO READ ONLY AREA\n");
+        return;
+    }
+
+    if (address >= VRAM_N0_8KB && address <= VRAM_N0_8KB_END) {
+        emulator->VRAM[address - VRAM_N0_8KB] = byte;
+    } else if (address >= WRAM_N0_4KB && address <= WRAM_N0_4KB_END){
+        emulator->WRAM1[address - WRAM_N0_4KB] = byte;
+    } else if (address >= WRAM_NN_4KB && address <= WRAM_NN_4KB_END){
+        emulator->WRAM2[address - WRAM_NN_4KB] = byte;
+    } else if (address >= HRAM_N0 && address <= HRAM_N0_END){
+        emulator->HRAM[address - HRAM_N0] = byte;
+    }
+
+    if (address >= IO_REG && address <= IO_REG_END){
+        printf("\tIO WRITE REGISTERS\n");
+        switch (address) {
+            case 0xFF05: break; // R_TIMA
+            case 0xFF06: break; // R_TMA
+            case 0xFF07: break; // R_TAC
+            case 0xFF04: break; // R_DIV
+            case 0xFF02: {
+                if (byte == 0x81){
+                    printf("AYO WTF MAN\n");
+                    printf("[%c]", emulator->cartridge.file[0xFF01]);
+                    emulator->cartridge.file[address] = 0x00;
+                    return;
+                }
+                break;
+            }
+        }
     }
 }
 
@@ -178,23 +217,19 @@ static inline uint16_t read2Bytes(Emulator* emu) {
 }
 
 static void increment_R_8(Emulator* emulator, REGISTER_TYPE reg){
-    printf("Incrementing register\n");
     uint8_t old_val = get_reg_byte(emulator, reg);
     INC_R(emulator, reg);
     
-    SET_FLAG_Z(emulator, reg);
+    SET_FLAG_Z(emulator, get_reg_byte(emulator, reg));
     set_flag(emulator, FLAG_N, 0);
     SET_FLAG_H_ADD(emulator, old_val, 1);
-
-    printf("| old -> 0x%02x | new -> 0x%02x \n\n", old_val, get_reg_byte(emulator, reg));
 }
 
 static void decrement_R_8(Emulator* emulator, REGISTER_TYPE reg){
     uint8_t old_val = get_reg_byte(emulator, reg);
-    uint8_t new = --old_val;
     DEC_R(emulator, reg);
-
-    set_flag(emulator, FLAG_Z, reg == 0 ? 1 : 0);
+    
+    SET_FLAG_Z(emulator, get_reg_byte(emulator, reg));
     set_flag(emulator, FLAG_N, 1);
     SET_FLAG_H_SUB(emulator, old_val, 1);
 }
@@ -240,7 +275,8 @@ static void ccf(Emulator* emulator){
 
 static void JumpConditionRelative(Emulator* emulator, bool condition){
     if (condition){
-        emulator->rPC += (int8_t)readByte(emulator);
+        int8_t byte = (int8_t)readByte(emulator);
+        emulator->rPC += byte;
     }
 }
 
@@ -517,6 +553,93 @@ static void shiftRightLogicalR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTE
     set_flag(emulator, FLAG_H, 0);
     set_flag(emulator, FLAG_N, 0);
     set_flag(emulator, FLAG_C, bit1);
+}
+
+  //////////////////////////////////
+ ///////// SWAP FUNCTIONS /////////
+//////////////////////////////////
+
+static void swapR8(Emulator* emulator, REGISTER_TYPE reg){
+    uint8_t value = get_reg_byte(emulator, reg);
+    uint8_t high = value >> 4;
+    uint8_t low = value & 0xF;
+
+    uint8_t new = (low << 4) | high;
+
+    write_to_reg(emulator, reg, new);
+
+    SET_FLAG_Z(emulator, new);
+    set_flag(emulator, FLAG_H, 0);
+    set_flag(emulator, FLAG_N, 0);
+    set_flag(emulator, FLAG_C, 0);
+}
+
+static void swapR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2){
+    uint16_t address = get_reg16(emulator, reg1, reg2);
+    uint8_t value = read_address(emulator, address);
+    uint8_t high = value >> 4;
+    uint8_t low = value & 0xF;
+
+    uint8_t new = (low << 4) | high;
+
+    write_address(emulator, address, value);
+
+    SET_FLAG_Z(emulator, new);
+    set_flag(emulator, FLAG_H, 0);
+    set_flag(emulator, FLAG_N, 0);
+    set_flag(emulator, FLAG_C, 0);
+}
+
+static void BitR8(Emulator* emulator, REGISTER_TYPE reg, uint8_t bit){
+    uint8_t value = get_reg_byte(emulator, reg);
+    uint8_t bitvalue = (value >> bit) & 0x1;
+
+    SET_FLAG_Z(emulator, bitvalue);
+    set_flag(emulator, FLAG_N, 0);
+    set_flag(emulator, FLAG_H, 1);
+}
+
+static void BitR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2, uint8_t bit){
+    uint8_t value = read_address(emulator, get_reg16(emulator, reg1, reg2));
+    uint8_t bitvalue = (value >> bit) & 0x1;
+
+    SET_FLAG_Z(emulator, bitvalue);
+    set_flag(emulator, FLAG_N, 0);
+    set_flag(emulator, FLAG_H, 1);
+}
+
+static void setR8(Emulator* emulator, REGISTER_TYPE reg, uint8_t bit){
+    uint8_t value = get_reg_byte(emulator, reg);
+    uint8_t orvalue = 1 << bit;
+    uint8_t result = value | orvalue;
+
+    write_to_reg(emulator, reg, result);
+}
+
+static void setR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2, uint8_t bit){
+    uint16_t address = get_reg16(emulator, reg1, reg2);
+    uint8_t value = read_address(emulator, address);
+    uint8_t orvalue = 1 << bit;
+    uint8_t result = value | orvalue;
+
+    write_address(emulator, address, result);
+}
+
+static void resetR8(Emulator* emulator, REGISTER_TYPE reg, uint8_t bit){
+    uint8_t value = get_reg_byte(emulator, reg);
+    uint8_t andvalue = ~(1 << bit);
+    uint8_t result = value & andvalue;
+
+    write_to_reg(emulator, reg, result);
+}
+
+static void resetR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2, uint8_t bit){
+    uint16_t address = get_reg16(emulator, reg1, reg2);
+    uint8_t value = read_address(emulator, address);
+    uint8_t andvalue = ~(1 << bit);
+    uint8_t result = value & andvalue;
+
+    write_address(emulator, address, result);
 }
 
 static void addRR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2, REGISTER_TYPE reg3, REGISTER_TYPE reg4){
@@ -937,7 +1060,7 @@ static void callCondition(Emulator* emulator, uint16_t address, bool condition){
 }
 
 static bool checkIME(Emulator* emulator, uint8_t IE, uint8_t IF){
-    if ((IE & IF & 0x1F) == 0) {
+    if (!INTERRUPT_REQ(IE, IF)) {
         printf("=== HALTING EMULATOR ===\n");
         emulator->haltMode = true;
         
@@ -947,18 +1070,17 @@ static bool checkIME(Emulator* emulator, uint8_t IE, uint8_t IF){
 }
 
 static void dispatch_interrupt(Emulator* emulator, INTERRUPT interrupt){
-    printf("Dispatching interrupt\n");
     IMD(emulator);
 
     emulator->IF &= ~(1 << interrupt);
 
     switch (interrupt)
     {
-        case INTERRUPT_VBLANK:      printf("-> INTERRUPT_VBLANK\n");    call(emulator, 0x40); break;
-        case INTERRUPT_LCD_STAT:    printf("-> INTERRUPT_LCD_STAT\n");  call(emulator, 0x48); break;
-        case INTERRUPT_TIMER:       printf("-> INTERRUPT_TIMER\n");     call(emulator, 0x50); break;
-        case INTERRUPT_SERIAL:      printf("-> INTERRUPT_SERIAL\n");    call(emulator, 0x58); break;
-        case INTERRUPT_JOYPAD:      printf("-> INTERRUPT_JOYPAD\n");    call(emulator, 0x60); break;
+        case INTERRUPT_VBLANK:      printf("\t-> INTERRUPT_VBLANK\n");    call(emulator, 0x40); break;
+        case INTERRUPT_LCD_STAT:    printf("\t-> INTERRUPT_LCD_STAT\n");  call(emulator, 0x48); break;
+        case INTERRUPT_TIMER:       printf("\t-> INTERRUPT_TIMER\n");     call(emulator, 0x50); break;
+        case INTERRUPT_SERIAL:      printf("\t-> INTERRUPT_SERIAL\n");    call(emulator, 0x58); break;
+        case INTERRUPT_JOYPAD:      printf("\t-> INTERRUPT_JOYPAD\n");    call(emulator, 0x60); break;
         default:                                                                              break;
     }
 }
@@ -973,9 +1095,7 @@ static void halt(Emulator* emulator){
     } else {
         if (!checkIME(emulator, IE, IF)){
             emulator->schedule_halt_bug = true;
-            printf("Recreating the halt bug ...\n");
         }
-
     }
 }
 
@@ -985,24 +1105,25 @@ static void stop_halt(Emulator* emulator){
 }
 
 static void handleInterrupts(Emulator* emulator){
-    printf("=> Handling interrupts \n");
+    printf("=> Handling interrupts ");
     uint8_t IE = emulator->IE; // enabled interrupts
     uint8_t IF = emulator->IF; // requested interrupts
 
     if (emulator->IME){
-        printf("INTERRUPT: MASTER ENABLED\n");
+        printf("IME ");
 
-        if ((IE & IF & 0x1F) != 0){
+        if (INTERRUPT_REQ(IE, IF)){ // If interrupt was requested
 
             stop_halt(emulator);
 
             // There has been atleast 1 interrupt enabled
 
+            printf("Interrupt no. ");
             for (int i = 0; i < 5; i++){
-                printf("interrupt no. %d\n", i);
+                printf("%d ", i);
 
-                uint8_t requestBit = (IE >> i) & 0x1;
-                uint8_t enabledBit = (IF >> i) & 0x1;
+                uint8_t requestBit = (IF >> i) & 0x1;
+                uint8_t enabledBit = (IE >> i) & 0x1;
 
                 if (requestBit && enabledBit) {
                     // dispatch the highest priorty interrupt 'i'
@@ -1010,12 +1131,12 @@ static void handleInterrupts(Emulator* emulator){
                     return;
                 }
             }
+            printf("\n");
         } else {
-            printf("But (IE & IF & 0x1F) == 0\n\n");
+            printf("XX\n");
         }
     } else {
-        if ((IE & IF & 0x1F) != 0) {
-            printf("IME is disabled, so exiting halt ... \n\n");
+        if (INTERRUPT_REQ(IE, IF)) {
             stop_halt(emulator);
         }
         printf("\n");
@@ -1043,6 +1164,7 @@ static void prefixCB(Emulator* emulator){
         case 0x0D: rotateRightR8(emulator, REGISTER_L, true); break;
         case 0x0E: rotateRightR16(emulator, REGISTER_H, REGISTER_L, true); break;
         case 0x0F: rotateRightR8(emulator, REGISTER_A, true); break;
+        
         case 0x10: RotateLeftCarryR8(emulator, REGISTER_B, true); break;
         case 0x11: RotateLeftCarryR8(emulator, REGISTER_C, true); break;
         case 0x12: RotateLeftCarryR8(emulator, REGISTER_D, true); break;
@@ -1059,7 +1181,245 @@ static void prefixCB(Emulator* emulator){
         case 0x1D: RotateRightCarryR8(emulator, REGISTER_L, true); break;
         case 0x1E: RotateRightCarryR16(emulator, REGISTER_H, REGISTER_L, true); break;
         case 0x1F: RotateRightCarryR8(emulator, REGISTER_A, true); break;
-    default: break;
+        
+        case 0x20: shiftLeftArithmeticR8(emulator, REGISTER_B); break;
+        case 0x21: shiftLeftArithmeticR8(emulator, REGISTER_C); break;
+        case 0x22: shiftLeftArithmeticR8(emulator, REGISTER_D); break;
+        case 0x23: shiftLeftArithmeticR8(emulator, REGISTER_E); break;
+        case 0x24: shiftLeftArithmeticR8(emulator, REGISTER_H); break;
+        case 0x25: shiftLeftArithmeticR8(emulator, REGISTER_L); break;
+        case 0x26: shiftLeftArithmeticR16(emulator, REGISTER_H, REGISTER_L); break;
+        case 0x27: shiftLeftArithmeticR8(emulator, REGISTER_A); break;
+        case 0x28: shiftRightArithmeticR8(emulator, REGISTER_B); break;
+        case 0x29: shiftRightArithmeticR8(emulator, REGISTER_C); break;
+        case 0x2A: shiftRightArithmeticR8(emulator, REGISTER_D); break;
+        case 0x2B: shiftRightArithmeticR8(emulator, REGISTER_E); break;
+        case 0x2C: shiftRightArithmeticR8(emulator, REGISTER_H); break;
+        case 0x2D: shiftRightArithmeticR8(emulator, REGISTER_L); break;
+        case 0x2E: shiftRightArithmeticR16(emulator, REGISTER_H, REGISTER_L); break;
+        case 0x2F: shiftRightArithmeticR8(emulator, REGISTER_A); break;
+
+        case 0x30: swapR8(emulator, REGISTER_B); break;
+        case 0x31: swapR8(emulator, REGISTER_C); break;
+        case 0x32: swapR8(emulator, REGISTER_D); break;
+        case 0x33: swapR8(emulator, REGISTER_E); break;
+        case 0x34: swapR8(emulator, REGISTER_H); break;
+        case 0x35: swapR8(emulator, REGISTER_L); break;
+        case 0x36: swapR16(emulator, REGISTER_H, REGISTER_L); break;
+        case 0x37: swapR8(emulator, REGISTER_A); break;
+        case 0x38: shiftRightLogicalR8(emulator, REGISTER_B); break;
+        case 0x39: shiftRightLogicalR8(emulator, REGISTER_C); break;
+        case 0x3A: shiftRightLogicalR8(emulator, REGISTER_D); break;
+        case 0x3B: shiftRightLogicalR8(emulator, REGISTER_E); break;
+        case 0x3C: shiftRightLogicalR8(emulator, REGISTER_H); break;
+        case 0x3D: shiftRightLogicalR8(emulator, REGISTER_L); break;
+        case 0x3E: shiftRightLogicalR16(emulator, REGISTER_H, REGISTER_L); break;
+        case 0x3F: shiftRightLogicalR8(emulator, REGISTER_A); break;
+
+        case 0x40: BitR8(emulator, REGISTER_B, 0); break;
+        case 0x41: BitR8(emulator, REGISTER_C, 0); break;
+        case 0x42: BitR8(emulator, REGISTER_D, 0); break;
+        case 0x43: BitR8(emulator, REGISTER_E, 0); break;
+        case 0x44: BitR8(emulator, REGISTER_H, 0); break;
+        case 0x45: BitR8(emulator, REGISTER_L, 0); break;
+        case 0x46: BitR16(emulator, REGISTER_H, REGISTER_L, 0); break;
+        case 0x47: BitR8(emulator, REGISTER_A, 0); break;
+        case 0x48: BitR8(emulator, REGISTER_B, 1); break;
+        case 0x49: BitR8(emulator, REGISTER_C, 1); break;
+        case 0x4A: BitR8(emulator, REGISTER_D, 1); break;
+        case 0x4B: BitR8(emulator, REGISTER_E, 1); break;
+        case 0x4C: BitR8(emulator, REGISTER_H, 1); break;
+        case 0x4D: BitR8(emulator, REGISTER_L, 1); break;
+        case 0x4E: BitR16(emulator, REGISTER_H, REGISTER_L, 1); break;
+        case 0x4F: BitR8(emulator, REGISTER_A, 1); break;
+
+        case 0x50: BitR8(emulator, REGISTER_B, 2); break;
+        case 0x51: BitR8(emulator, REGISTER_C, 2); break;
+        case 0x52: BitR8(emulator, REGISTER_D, 2); break;
+        case 0x53: BitR8(emulator, REGISTER_E, 2); break;
+        case 0x54: BitR8(emulator, REGISTER_H, 2); break;
+        case 0x55: BitR8(emulator, REGISTER_L, 2); break;
+        case 0x56: BitR16(emulator, REGISTER_H, REGISTER_L, 2); break;
+        case 0x57: BitR8(emulator, REGISTER_A, 2); break;
+        case 0x58: BitR8(emulator, REGISTER_B, 3); break;
+        case 0x59: BitR8(emulator, REGISTER_C, 3); break;
+        case 0x5A: BitR8(emulator, REGISTER_D, 3); break;
+        case 0x5B: BitR8(emulator, REGISTER_E, 3); break;
+        case 0x5C: BitR8(emulator, REGISTER_H, 3); break;
+        case 0x5D: BitR8(emulator, REGISTER_L, 3); break;
+        case 0x5E: BitR16(emulator, REGISTER_H, REGISTER_L, 3); break;
+        case 0x5F: BitR8(emulator, REGISTER_A, 3); break;
+
+        case 0x60: BitR8(emulator, REGISTER_B, 4); break;
+        case 0x61: BitR8(emulator, REGISTER_C, 4); break;
+        case 0x62: BitR8(emulator, REGISTER_D, 4); break;
+        case 0x63: BitR8(emulator, REGISTER_E, 4); break;
+        case 0x64: BitR8(emulator, REGISTER_H, 4); break;
+        case 0x65: BitR8(emulator, REGISTER_L, 4); break;
+        case 0x66: BitR16(emulator, REGISTER_H, REGISTER_L, 4); break;
+        case 0x67: BitR8(emulator, REGISTER_A, 4); break;
+        case 0x68: BitR8(emulator, REGISTER_B, 5); break;
+        case 0x69: BitR8(emulator, REGISTER_C, 5); break;
+        case 0x6A: BitR8(emulator, REGISTER_D, 5); break;
+        case 0x6B: BitR8(emulator, REGISTER_E, 5); break;
+        case 0x6C: BitR8(emulator, REGISTER_H, 5); break;
+        case 0x6D: BitR8(emulator, REGISTER_L, 5); break;
+        case 0x6E: BitR16(emulator, REGISTER_H, REGISTER_L, 5); break;
+        case 0x6F: BitR8(emulator, REGISTER_A, 5); break;
+
+        case 0x70: BitR8(emulator, REGISTER_B, 6); break;
+        case 0x71: BitR8(emulator, REGISTER_C, 6); break;
+        case 0x72: BitR8(emulator, REGISTER_D, 6); break;
+        case 0x73: BitR8(emulator, REGISTER_E, 6); break;
+        case 0x74: BitR8(emulator, REGISTER_H, 6); break;
+        case 0x75: BitR8(emulator, REGISTER_L, 6); break;
+        case 0x76: BitR16(emulator, REGISTER_H, REGISTER_L, 6); break;
+        case 0x77: BitR8(emulator, REGISTER_A, 6); break;
+        case 0x78: BitR8(emulator, REGISTER_B, 7); break;
+        case 0x79: BitR8(emulator, REGISTER_C, 7); break;
+        case 0x7A: BitR8(emulator, REGISTER_D, 7); break;
+        case 0x7B: BitR8(emulator, REGISTER_E, 7); break;
+        case 0x7C: BitR8(emulator, REGISTER_H, 7); break;
+        case 0x7D: BitR8(emulator, REGISTER_L, 7); break;
+        case 0x7E: BitR16(emulator, REGISTER_H, REGISTER_L, 7); break;
+        case 0x7F: BitR8(emulator, REGISTER_A, 7); break;
+        
+        case 0x80: resetR8(emulator, REGISTER_B, 0); break;
+        case 0x81: resetR8(emulator, REGISTER_C, 0); break;
+        case 0x82: resetR8(emulator, REGISTER_D, 0); break;
+        case 0x83: resetR8(emulator, REGISTER_E, 0); break;
+        case 0x84: resetR8(emulator, REGISTER_H, 0); break;
+        case 0x85: resetR8(emulator, REGISTER_L, 0); break;
+        case 0x86: resetR16(emulator, REGISTER_H, REGISTER_L, 0); break;
+        case 0x87: resetR8(emulator, REGISTER_A, 0); break;
+        case 0x88: resetR8(emulator, REGISTER_B, 1); break;
+        case 0x89: resetR8(emulator, REGISTER_C, 1); break;
+        case 0x8A: resetR8(emulator, REGISTER_D, 1); break;
+        case 0x8B: resetR8(emulator, REGISTER_E, 1); break;
+        case 0x8C: resetR8(emulator, REGISTER_H, 1); break;
+        case 0x8D: resetR8(emulator, REGISTER_L, 1); break;
+        case 0x8E: resetR16(emulator, REGISTER_H, REGISTER_L, 1); break;
+        case 0x8F: resetR8(emulator, REGISTER_A, 1); break;
+        
+        case 0x90: resetR8(emulator, REGISTER_B, 2); break;
+        case 0x91: resetR8(emulator, REGISTER_C, 2); break;
+        case 0x92: resetR8(emulator, REGISTER_D, 2); break;
+        case 0x93: resetR8(emulator, REGISTER_E, 2); break;
+        case 0x94: resetR8(emulator, REGISTER_H, 2); break;
+        case 0x95: resetR8(emulator, REGISTER_L, 2); break;
+        case 0x96: resetR16(emulator, REGISTER_H, REGISTER_L, 2); break;
+        case 0x97: resetR8(emulator, REGISTER_A, 2); break;
+        case 0x98: resetR8(emulator, REGISTER_B, 3); break;
+        case 0x99: resetR8(emulator, REGISTER_C, 3); break;
+        case 0x9A: resetR8(emulator, REGISTER_D, 3); break;
+        case 0x9B: resetR8(emulator, REGISTER_E, 3); break;
+        case 0x9C: resetR8(emulator, REGISTER_H, 3); break;
+        case 0x9D: resetR8(emulator, REGISTER_L, 3); break;
+        case 0x9E: resetR16(emulator, REGISTER_H, REGISTER_L, 3); break;
+        case 0x9F: resetR8(emulator, REGISTER_A, 3); break;
+        
+        case 0xA0: resetR8(emulator, REGISTER_B, 4); break;
+        case 0xA1: resetR8(emulator, REGISTER_C, 4); break;
+        case 0xA2: resetR8(emulator, REGISTER_D, 4); break;
+        case 0xA3: resetR8(emulator, REGISTER_E, 4); break;
+        case 0xA4: resetR8(emulator, REGISTER_H, 4); break;
+        case 0xA5: resetR8(emulator, REGISTER_L, 4); break;
+        case 0xA6: resetR16(emulator, REGISTER_H, REGISTER_L, 4); break;
+        case 0xA7: resetR8(emulator, REGISTER_A, 4); break;
+        case 0xA8: resetR8(emulator, REGISTER_B, 5); break;
+        case 0xA9: resetR8(emulator, REGISTER_C, 5); break;
+        case 0xAA: resetR8(emulator, REGISTER_D, 5); break;
+        case 0xAB: resetR8(emulator, REGISTER_E, 5); break;
+        case 0xAC: resetR8(emulator, REGISTER_H, 5); break;
+        case 0xAD: resetR8(emulator, REGISTER_L, 5); break;
+        case 0xAE: resetR16(emulator, REGISTER_H, REGISTER_L, 5); break;
+        case 0xAF: resetR8(emulator, REGISTER_A, 5); break;
+        
+        case 0xB0: resetR8(emulator, REGISTER_B, 6); break;
+        case 0xB1: resetR8(emulator, REGISTER_C, 6); break;
+        case 0xB2: resetR8(emulator, REGISTER_D, 6); break;
+        case 0xB3: resetR8(emulator, REGISTER_E, 6); break;
+        case 0xB4: resetR8(emulator, REGISTER_H, 6); break;
+        case 0xB5: resetR8(emulator, REGISTER_L, 6); break;
+        case 0xB6: resetR16(emulator, REGISTER_H, REGISTER_L, 6); break;
+        case 0xB7: resetR8(emulator, REGISTER_A, 6); break;
+        case 0xB8: resetR8(emulator, REGISTER_B, 7); break;
+        case 0xB9: resetR8(emulator, REGISTER_C, 7); break;
+        case 0xBA: resetR8(emulator, REGISTER_D, 7); break;
+        case 0xBB: resetR8(emulator, REGISTER_E, 7); break;
+        case 0xBC: resetR8(emulator, REGISTER_H, 7); break;
+        case 0xBD: resetR8(emulator, REGISTER_L, 7); break;
+        case 0xBE: resetR16(emulator, REGISTER_H, REGISTER_L, 7); break;
+        case 0xBF: resetR8(emulator, REGISTER_A, 7); break;
+
+        case 0xC0: setR8(emulator, REGISTER_B, 0); break;
+        case 0xC1: setR8(emulator, REGISTER_C, 0); break;
+        case 0xC2: setR8(emulator, REGISTER_D, 0); break;
+        case 0xC3: setR8(emulator, REGISTER_E, 0); break;
+        case 0xC4: setR8(emulator, REGISTER_H, 0); break;
+        case 0xC5: setR8(emulator, REGISTER_L, 0); break;
+        case 0xC6: setR16(emulator, REGISTER_H, REGISTER_L, 0); break;
+        case 0xC7: setR8(emulator, REGISTER_A, 0); break;
+        case 0xC8: setR8(emulator, REGISTER_B, 1); break;
+        case 0xC9: setR8(emulator, REGISTER_C, 1); break;
+        case 0xCA: setR8(emulator, REGISTER_D, 1); break;
+        case 0xCB: setR8(emulator, REGISTER_E, 1); break;
+        case 0xCC: setR8(emulator, REGISTER_H, 1); break;
+        case 0xCD: setR8(emulator, REGISTER_L, 1); break;
+        case 0xCE: setR16(emulator, REGISTER_H, REGISTER_L, 1); break;
+        case 0xCF: setR8(emulator, REGISTER_A, 1); break;
+
+        case 0xD0: setR8(emulator, REGISTER_B, 2); break;
+        case 0xD1: setR8(emulator, REGISTER_C, 2); break;
+        case 0xD2: setR8(emulator, REGISTER_D, 2); break;
+        case 0xD3: setR8(emulator, REGISTER_E, 2); break;
+        case 0xD4: setR8(emulator, REGISTER_H, 2); break;
+        case 0xD5: setR8(emulator, REGISTER_L, 2); break;
+        case 0xD6: setR16(emulator, REGISTER_H, REGISTER_L, 2); break;
+        case 0xD7: setR8(emulator, REGISTER_A, 2); break;
+        case 0xD8: setR8(emulator, REGISTER_B, 3); break;
+        case 0xD9: setR8(emulator, REGISTER_C, 3); break;
+        case 0xDA: setR8(emulator, REGISTER_D, 3); break;
+        case 0xDB: setR8(emulator, REGISTER_E, 3); break;
+        case 0xDC: setR8(emulator, REGISTER_H, 3); break;
+        case 0xDD: setR8(emulator, REGISTER_L, 3); break;
+        case 0xDE: setR16(emulator, REGISTER_H, REGISTER_L, 3); break;
+        case 0xDF: setR8(emulator, REGISTER_A, 3); break;
+
+        case 0xE0: setR8(emulator, REGISTER_B, 4); break;
+        case 0xE1: setR8(emulator, REGISTER_C, 4); break;
+        case 0xE2: setR8(emulator, REGISTER_D, 4); break;
+        case 0xE3: setR8(emulator, REGISTER_E, 4); break;
+        case 0xE4: setR8(emulator, REGISTER_H, 4); break;
+        case 0xE5: setR8(emulator, REGISTER_L, 4); break;
+        case 0xE6: setR16(emulator, REGISTER_H, REGISTER_L, 4); break;
+        case 0xE7: setR8(emulator, REGISTER_A, 4); break;
+        case 0xE8: setR8(emulator, REGISTER_B, 5); break;
+        case 0xE9: setR8(emulator, REGISTER_C, 5); break;
+        case 0xEA: setR8(emulator, REGISTER_D, 5); break;
+        case 0xEB: setR8(emulator, REGISTER_E, 5); break;
+        case 0xEC: setR8(emulator, REGISTER_H, 5); break;
+        case 0xED: setR8(emulator, REGISTER_L, 5); break;
+        case 0xEE: setR16(emulator, REGISTER_H, REGISTER_L, 5); break;
+        case 0xEF: setR8(emulator, REGISTER_A, 5); break;
+
+        case 0xF0: setR8(emulator, REGISTER_B, 6); break;
+        case 0xF1: setR8(emulator, REGISTER_C, 6); break;
+        case 0xF2: setR8(emulator, REGISTER_D, 6); break;
+        case 0xF3: setR8(emulator, REGISTER_E, 6); break;
+        case 0xF4: setR8(emulator, REGISTER_H, 6); break;
+        case 0xF5: setR8(emulator, REGISTER_L, 6); break;
+        case 0xF6: setR16(emulator, REGISTER_H, REGISTER_L, 6); break;
+        case 0xF7: setR8(emulator, REGISTER_A, 6); break;
+        case 0xF8: setR8(emulator, REGISTER_B, 7); break;
+        case 0xF9: setR8(emulator, REGISTER_C, 7); break;
+        case 0xFA: setR8(emulator, REGISTER_D, 7); break;
+        case 0xFB: setR8(emulator, REGISTER_E, 7); break;
+        case 0xFC: setR8(emulator, REGISTER_H, 7); break;
+        case 0xFD: setR8(emulator, REGISTER_L, 7); break;
+        case 0xFE: setR16(emulator, REGISTER_H, REGISTER_L, 7); break;
+        case 0xFF: setR8(emulator, REGISTER_A, 7); break;
+        default: break;
     }
 }
 
