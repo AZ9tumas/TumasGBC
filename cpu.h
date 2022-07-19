@@ -23,27 +23,38 @@ typedef enum {
 
 typedef enum {
     ROM_N0_16KB = 0x0000,                       // 16KB ROM Bank number 0 (from cartridge)
-    ROM_N0_16KB_END = 0x3FFF,               
+    ROM_N0_16KB_END = 0x3FFF,
+
     ROM_NN_16KB = 0x4000,                       // 16KB Switchable ROM Bank area (from cartridge)
     ROM_NN_16KB_END = 0x7FFF,
+
     VRAM_N0_8KB = 0x8000,                       // 8KB Switchable vram
     VRAM_N0_8KB_END = 0x9FFF,
+
     RAM_NN_8KB = 0xA000,                        // 8KB Switchable RAM Bank area (from cartridge)
-    RAM_NN_8KB_END = 0xBFFF,                    
+    RAM_NN_8KB_END = 0xBFFF,  
+
     WRAM_N0_4KB = 0xC000,                       // 4KB Work RAM
     WRAM_N0_4KB_END = 0xCFFF,
+
     WRAM_NN_4KB = 0xD000,                       // 4KB Switchable Work RAM (!cartridge)
     WRAM_NN_4KB_END = 0xDFFF,
+
     ECHO_N0_8KB = 0xE000,                       
     ECHO_N0_8KB_END = 0xFDFF,
+
     OAM_N0_160B = 0xFE00,                       // Where sprites (or screen objects) are stored
     OAM_N0_160B_END = 0xFE9F,
+    
     UNUSABLE_N0 = 0xFEA0,                       
     UNUSABLE_N0_END = 0xFEFF,
+
     IO_REG = 0xFF00,                            // IO register
     IO_REG_END = 0xFF7F,
+
     HRAM_N0 = 0xFF80,                           // High Ram
     HRAM_N0_END = 0xFFFE, 
+
     INTERRUPT_ENABLE = 0xFFFF                   // interrupts register ...
 } MEMORY_ADDRESS;
 
@@ -73,7 +84,13 @@ typedef struct {
     bool schedule_halt_bug;  // imagine implementing bugs
 
     // Memory
-    uint8_t MEM[0xFFFF + 1];
+    uint8_t VRAM[0x2000];
+    uint8_t WRAM1[0x1000];
+    uint8_t WRAM2[0x1000];
+    uint8_t HRAM[0x7f];
+    uint8_t IO[0x80];
+
+
     uint8_t* wramBanks;
     uint8_t* vramBanks;
     void* memController;
