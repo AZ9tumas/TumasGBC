@@ -1,0 +1,4 @@
+clear
+make
+./gbc ldrr.gb > log.txt
+python3 debug.py
