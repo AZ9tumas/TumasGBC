@@ -1,19 +1,16 @@
 #ifndef gbc_emu
 #define gbc_emu
 
-#include "common.h"
 #include "cartridge.h"
-
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_render.h>
-#include <SDL2/SDL_timer.h>
 
 #include <time.h>
 #include <sys/time.h>
 
-typedef struct {
-    uint8_t *code;
+#include <SDL2/SDL_render.h>
+#include <SDL2/SDL_timer.h>
+#include <SDL2/SDL.h>
 
+typedef struct {
     // CPU
     // - Registers
     uint8_t rA;
@@ -36,6 +33,10 @@ typedef struct {
     SDL_Renderer* sdl_renderer;
     unsigned long start_time_ticks;
     unsigned long last_render_time;
+    bool ppuEnabled;
+
+    unsigned int cyclesFromLastFrame;
+    unsigned int cyclesFromLastMode;
 
     // - Other Stuff
     bool schedule_interrupt_enable;
@@ -49,12 +50,10 @@ typedef struct {
     uint8_t HRAM[0x7f];
     uint8_t IO[0x80];
 
-    uint8_t* wramBanks;
-    uint8_t* vramBanks;
     void* memController;
     
-    uint8_t joypad_direction_buffer;
-    uint64_t joypad_action_buffer;
+    uint8_t joypad_direction;
+    uint64_t joypad_action;
 
     // Emulator
     Cartridge cartridge;
@@ -69,7 +68,8 @@ typedef struct {
 
 Emulator* initEmulator(Emulator* emulator);
 void initCartridgeEmulator(Emulator* emulator, Cartridge cartridge);
-int initSDL(Emulator* emulator);
+void cyclesSync(Emulator* emulator);
 unsigned long getTime();
+void endRun(Emulator* emulator);
 
 #endif
