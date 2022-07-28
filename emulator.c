@@ -1,5 +1,4 @@
 #include "emulator.h"
-#include "display.h"
 #include <sys/time.h>
 
 void initCartridgeEmulator(Emulator* emulator, Cartridge cartridge){
@@ -28,9 +27,13 @@ Emulator* initEmulator(Emulator* emulator){
     emulator->clock = 0;
     emulator->start_time_ticks = 0;
     emulator->last_render_time = 0;
+    emulator->ppuEnabled = true;
 
-    emulator->joypad_action_buffer = 0xF;
-    emulator->joypad_direction_buffer = 0xF;
+    emulator->cyclesFromLastFrame = 0;
+    emulator->cyclesFromLastMode = 0;
+
+    emulator->joypad_action = 0xF;
+    emulator->joypad_direction = 0xF;
 
     emulator->IME = false;
     emulator->IE = 0x00;
@@ -39,20 +42,18 @@ Emulator* initEmulator(Emulator* emulator){
     return emulator;
 }
 
-int initSDL(Emulator* emulator){
-    SDL_Init(SDL_INIT_EVERYTHING);
-    SDL_CreateWindowAndRenderer(WIDTH_PX * DISPLAY_SCALING, HEIGHT_PX * DISPLAY_SCALING, SDL_WINDOW_SHOWN, &emulator->sdl_window, &emulator->sdl_renderer);
-
-    if (!emulator->sdl_window) return 1;
-    SDL_SetWindowTitle(emulator->sdl_window, "Tumas Emulator");
-    SDL_RenderSetScale(emulator->sdl_renderer, DISPLAY_SCALING, DISPLAY_SCALING);
-    
-    return 0;
-}
-
 unsigned long getTime() {
 	struct timeval current_time;
     gettimeofday(&current_time, NULL);
 
     return (current_time.tv_sec * 1000000) + current_time.tv_usec;
+}
+
+void endRun(Emulator* emulator){    
+    /* Free SDL */
+    SDL_DestroyRenderer(emulator->sdl_renderer);
+    SDL_DestroyWindow(emulator->sdl_window);
+    SDL_Quit();
+
+    initEmulator(emulator);
 }
