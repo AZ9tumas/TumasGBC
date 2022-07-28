@@ -6,17 +6,17 @@
 #include <sys/time.h>
 
 #define LOAD_16B_RR(e, r1, r2) set_reg16(e, read2Bytes(e), r1, r2)
-#define LOAD_8R_16BRR(e, r1, r2, r3) write_to_reg(e, r1, read_address(e, get_reg16(e, r2, r3)))
-#define LOAD_16RB_R(e, r1, r2, r3) write_address(e, get_reg16(e, r1, r2), get_reg_byte(e, r3))
+#define LOAD_8R_16BRR(e, r1, r2, r3) write_to_reg(e, r1, read_address(e, get_reg16(e, r2, r3))); cyclesSync(e)
+#define LOAD_16RB_R(e, r1, r2, r3) write_address_4C(e, get_reg16(e, r1, r2), get_reg_byte(e, r3))
 #define LOAD_R8_R8(e, r1, r2) write_to_reg(e, r1, get_reg_byte(e, r2))
-#define LOAD_8B_R(e, r) write_to_reg(e, r, readByte(e))
+#define LOAD_8B_R(e, r) write_to_reg(e, r, readByte(e)); cyclesSync(e)
 // get 16b address and write that with u8 byte from read address
-#define LOAD_u8_addr_u16(e, r1, r2) write_address(e, get_reg16(e, r1, r2), readByte(e)) 
+#define LOAD_u8_addr_u16(e, r1, r2) write_address_4C(e, get_reg16(e, r1, r2), readByte(e)) 
 
 #define INC_R1_R2(e, reg1, reg2) set_reg16(e, get_reg16(e, reg1, reg2) + 1, reg1, reg2)
 #define DEC_R1_R2(e, reg1, reg2) set_reg16(e, get_reg16(e, reg1, reg2) - 1, reg1, reg2)
-#define INC_R(e,r) write_to_reg(e, r, get_reg_byte(e,r) + 1)
-#define DEC_R(e,r) write_to_reg(e, r, get_reg_byte(e,r) - 1)
+#define INC_R(e,r) write_to_reg(e, r, get_reg_byte(e,r) + 1); cyclesSync(e)
+#define DEC_R(e,r) write_to_reg(e, r, get_reg_byte(e,r) - 1); cyclesSync(e)
 
 #define SET_FLAG_Z(e, v) set_flag(e, FLAG_Z, v == 0 ? 1 : 0)
 #define SET_FLAG_H_ADD(e, v1, v2) set_flag(e, FLAG_H, (((uint32_t)v1 & 0xf) + ((uint32_t)v2 & 0xf) > 0xf) ? 1 : 0)
@@ -28,11 +28,11 @@
 #define SET_FLAG_C_SUB(e, v1, v2) set_flag(e, FLAG_C, ((int)(v1) - (int)(v2)) < 0 ? 1 : 0)
 
 #define JUMP(e, r, b) write_to_reg(e, r, get_reg_byte(e, r) + b)
-#define JUMP_u16(e, hex) e->rPC=hex
+#define JUMP_u16(e, hex) e->rPC=hex; cyclesSync(e)
 #define JUMP_RR(e,r1,r2) e->rPC=get_reg16(e,r1,r2)
 
 #define POP_RR(e, r1, r2) set_reg16(e, pop16(e), r1, r2)
-#define PUSH_RR(e, r1, r2) push16(e, get_reg16(e, r1, r2))
+#define PUSH_RR(e, r1, r2) cyclesSync(e); push16(e, get_reg16(e, r1, r2))
 #define RST(e, hex) call(e, hex)
 #define IME(e) e->schedule_interrupt_enable = true
 #define IMD(e) e->IME = false
@@ -57,26 +57,55 @@ uint8_t read_address(Emulator* emulator, uint16_t address);
 static void run(Emulator* emulator){
     emulator->start_time_ticks = getTime();
 
-    int i = 0;
-    for (;;){
-        i++;
-        //printf(" == Dispatch no. %d (0x%02x) == \n", i, emulator->cartridge.file[emulator->rPC]);
-        dispatch_emulator(emulator);
-	
-	    if (i >= 300000) break;
-        if (wrong) break;
+    while (emulator->run == true && wrong == false){
+        
+        SDL_events(emulator);
+
+        for (int i = 0; i < 2000; i ++){
+            dispatch_emulator(emulator);
+        }
     }
 }
 
 void startEmulator(Cartridge* cartridge, Emulator* emulator){
-    //printf("Dispatching Emulator\n\n");
     initCartridgeEmulator(emulator, *cartridge);
-    //initSDL(emulator);
+    int success_result = 0; //initSDL(emulator);
 
-    //write_address(emulator, 0xFF44, 0x90);
+    if (success_result != 0) {
+        printf("Unable to initialise SDL 2.0\n");
+        return;
+    }
+
+    write_address(emulator, 0xFF44, 0x00);
 
     emulator->run = true;
     run(emulator);
+    endRun(emulator);
+}
+
+void cyclesSync(Emulator* emulator){
+    emulator->clock += 4;
+
+    if (emulator->clock % 456 == 0) {
+        write_address(emulator, 0xFF44, read_address(emulator, 0xFF44) + 1);
+
+        if (read_address(emulator, 0xFF44) >= 153){
+            write_address(emulator, 0xFF44, 0x00);
+        }
+    }
+
+    Sync_Display(emulator, 4);
+}
+
+static uint8_t read_address_4C(Emulator* emulator, uint16_t address){
+    uint8_t g = read_address(emulator, address);
+    cyclesSync(emulator);
+    return g;
+}
+
+static void write_address_4C(Emulator* emulator, uint16_t address, uint8_t byte){
+    write_address(emulator, address, byte);
+    cyclesSync(emulator);
 }
 
 static void write_to_reg(Emulator* emulator, REGISTER_TYPE reg, uint8_t byte){
@@ -120,21 +149,11 @@ static inline uint8_t get_flag(Emulator* emulator, FLAG flag){
     return (emulator->rF >> (flag + 4) & 1);
 }
 
-/*
-* 0x4000 - 0x7FFF uve got rom banking space for the file. That area is used for files greater than 32 KB. If the file is sized 64 KB, u can map the other 32 KB in that section. Otherwise u dont have to worry about bigger files till u implement an MBC which will be much later.
-* 0x8000 - 0x9FFF uve got video ram, which is literally just normal RAM but it is used by the lcd to know what to draw on the screen, u just allocate an array of size 0x2000 bytes and map it to that address
-* 0xA000 - 0xBFFF is for external ram, that again is part of the MBC which u dont have to worry about rn
-* 0xC000 - 0xCFFF is the the normal ram or work ram. Its the first section of it
-* 0xD000 - 0xDFFF is the second section of the work ram. U can allocate another array for work ram and map it to these 2 areas
-* 0xE000 - 0xFDFF u dont have to emulate this area at all
-* 0xFE00 - 0xFE9F Used for storing sprite data, which u dont have to worry about rn but u can still allocate an array of size 0xA0 and map it to this region
-* 0xFEA0 - 0xFEFF self explanatory, its not usable. So error if something tries to read or write from here
-* 0xFF00 - 0xFF7F IO registers, u can allocate an array of size 0x80 and give each slot to a register
-* 0xFF80 - 0xFFFE High Ram which is a type of ram located in the cpu itself. Again just a normal array
-*/
-
 uint8_t read_address(Emulator* emulator, uint16_t address){
-    //printf("[0x%04x]", address);
+    /* Debugging stuff */
+    if (address >= VRAM_N0_8KB && address <= VRAM_N0_8KB_END)   printf ("VRAM -> 0x%02x\n", emulator->VRAM[address - VRAM_N0_8KB]);
+
+    /* Main Stuff */
     if (address >= 0x0000 && address <= 0x3FFF)                 return emulator->cartridge.file[address];
     if (address >= 0x4000 && address <= 0x7FFF)                 return emulator->cartridge.file[address];
     if (address >= VRAM_N0_8KB && address <= VRAM_N0_8KB_END)   return emulator->VRAM   [address - VRAM_N0_8KB];
@@ -147,16 +166,13 @@ uint8_t read_address(Emulator* emulator, uint16_t address){
 }
 
 static void write_address(Emulator* emulator, uint16_t address, uint8_t byte){
-    //printf("\tW 0x%02x -> 0x%04x\n", byte, address);
-    //printf("ggs -> %s 0x%04x", address >= IO_REG && address <= IO_REG_END ? "true" : "false", address);
     if ((address >= ECHO_N0_8KB && address <= ECHO_N0_8KB_END) || (address >= UNUSABLE_N0 && address <= UNUSABLE_N0_END)) {
-        //printf("\n\t<== WARNING ==> ATTEMPT TO WRITE TO READ ONLY AREA\n");
+        printf("\n\t<== WARNING ==> ATTEMPT TO WRITE TO READ ONLY AREA\n");
         return;
     }
 
     if (address >= VRAM_N0_8KB && address <= VRAM_N0_8KB_END) {
         emulator->VRAM[address - VRAM_N0_8KB] = byte;
-        //printf("0x%02x\n", byte);
         return;
     } else if (address >= WRAM_N0_4KB && address <= WRAM_N0_4KB_END){
         emulator->WRAM1[address - WRAM_N0_4KB] = byte;
@@ -197,6 +213,13 @@ static uint16_t set_reg16(Emulator* emu, uint16_t byte, REGISTER_TYPE reg1, REGI
     return byte;
 }
 
+static uint16_t set_reg16_8C(Emulator* emu, uint16_t byte, REGISTER_TYPE reg1, REGISTER_TYPE reg2){
+    uint16_t val = set_reg16(emu, byte, reg1, reg2);
+    cyclesSync(emu);
+    cyclesSync(emu);
+    return val;
+}
+
 static uint16_t get_reg16(Emulator* emu, REGISTER_TYPE reg1, REGISTER_TYPE reg2){
     
     return ((get_reg_byte(emu, reg1) << 8) | get_reg_byte(emu, reg2));
@@ -206,9 +229,27 @@ static inline uint8_t readByte(Emulator* emu){
     return (uint8_t)(read_address(emu, emu->rPC++));
 }
 
+static inline uint8_t readByte4C(Emulator* emu){
+    uint8_t byte = readByte(emu);
+    cyclesSync(emu);
+    return byte;
+}
+
 static inline uint16_t read2Bytes(Emulator* emu) {
     return (uint16_t)(read_address(emu, emu->rPC++) | (read_address(emu, emu->rPC++) << 8));
 }
+
+static inline uint16_t read2Bytes_8C(Emulator* emu) {
+    uint16_t entireThing = read2Bytes(emu);
+    cyclesSync(emu);
+    cyclesSync(emu);
+
+    return entireThing;
+}
+
+///////////////////////////////////
+/////// INNER CPU FUNCTIONS //////
+/////////////////////////////////
 
 static void increment_R_8(Emulator* emulator, REGISTER_TYPE reg){
     uint8_t old_val = get_reg_byte(emulator, reg);
@@ -268,10 +309,11 @@ static void ccf(Emulator* emulator){
 }
 
 static void JumpConditionRelative(Emulator* emulator, bool condition){
-    int8_t byte = (int8_t)readByte(emulator);
+    int8_t byte = (int8_t)readByte4C(emulator);
     if (condition == true){
         emulator->rPC += byte;
     }
+    cyclesSync(emulator);
 }
 
   ////////////////////////////////////
@@ -324,14 +366,14 @@ static void RotateLeftCarryR8(Emulator* emulator, REGISTER_TYPE reg, bool zflag)
 
 static void RotateLeftCarryR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2, bool zflag) {
     uint16_t address = get_reg16(emulator, reg1, reg2);
-    uint8_t val = read_address(emulator, address);
+    uint8_t val = read_address_4C(emulator, address);
     bool carry_flag = get_flag(emulator, FLAG_C);
     uint8_t bit7 = val >> 7;
 
     val <<= 1;
     val |= carry_flag;
 
-    write_address(emulator, address, val);
+    write_address_4C(emulator, address, val);
 
     if (zflag) {
         SET_FLAG_Z(emulator, val);
@@ -348,13 +390,13 @@ static void RotateLeftCarryR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_
 static void rotateLeftR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2, bool zflag){
     
     uint16_t address = get_reg16(emulator, reg1, reg2);
-    uint8_t val = read_address(emulator, address);
+    uint8_t val = read_address_4C(emulator, address);
     uint8_t bitno7 = val >> 7;
 
     val <<= 1;
     val |= bitno7;
 
-    write_address(emulator, address, val);
+    write_address_4C(emulator, address, val);
 
     if (zflag) {
         SET_FLAG_Z(emulator, val);
@@ -413,14 +455,14 @@ static void RotateRightCarryR8(Emulator* emulator, REGISTER_TYPE reg, bool zflag
 
 static void RotateRightCarryR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2, bool zflag){
     uint16_t address = get_reg16(emulator, reg1, reg2);
-    uint8_t val = read_address(emulator, address);
+    uint8_t val = read_address_4C(emulator, address);
     bool carry_flag = get_flag(emulator, FLAG_C);
     uint8_t bit0 = val & 1;
 
     val >>= 1;
     val |= carry_flag << 7;
 
-    write_address(emulator, address, val);
+    write_address_4C(emulator, address, val);
 
     if (zflag) {
         SET_FLAG_Z(emulator, val);
@@ -436,13 +478,13 @@ static void RotateRightCarryR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER
 
 static void rotateRightR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2, bool zflag) {
     uint16_t address = get_reg16(emulator, reg1, reg2);
-    uint8_t val = read_address(emulator, address);
+    uint8_t val = read_address_4C(emulator, address);
     uint8_t bitno1 = val & 1;
 
     val >>= 1;
     val |= bitno1 << 7;
 
-    write_address(emulator, address, val);
+    write_address_4C(emulator, address, val);
 
     if (zflag) {
         SET_FLAG_Z(emulator, val);
@@ -475,11 +517,11 @@ static void shiftLeftArithmeticR8(Emulator* emulator, REGISTER_TYPE reg){
 
 static void shiftLeftArithmeticR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2){
     uint16_t address = get_reg16(emulator, reg1, reg2);
-    uint8_t reg_val = read_address(emulator, address);
+    uint8_t reg_val = read_address_4C(emulator, address);
     uint8_t bit7 = reg_val >> 7;
     uint8_t result = reg_val << 1;
 
-    write_address(emulator, address, result);
+    write_address_4C(emulator, address, result);
 
     SET_FLAG_Z(emulator, result);
     set_flag(emulator, FLAG_H, 0);
@@ -504,13 +546,13 @@ static void shiftRightArithmeticR8(Emulator* emulator, REGISTER_TYPE reg){
 
 static void shiftRightArithmeticR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2){
     uint16_t address = get_reg16(emulator, reg1, reg2);
-    uint8_t value = read_address(emulator, address);
+    uint8_t value = read_address_4C(emulator, address);
     uint8_t bit7 = value >> 7;
     uint8_t bit0 = value & 0x1;
     uint8_t result = value >> 1;
 
     result |= bit7 << 7;
-    write_address(emulator, address, result);
+    write_address_4C(emulator, address, result);
 
     SET_FLAG_Z(emulator, result);
     set_flag(emulator, FLAG_H, 0);
@@ -537,11 +579,11 @@ static void shiftRightLogicalR8(Emulator* emulator, REGISTER_TYPE reg){
 
 static void shiftRightLogicalR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2){
     uint16_t address = get_reg16(emulator, reg1, reg2);
-    uint8_t value = read_address(emulator, address);
+    uint8_t value = read_address_4C(emulator, address);
     uint8_t bit1 = value & 0x1;
     uint8_t result = value >> 1;
 
-    write_address(emulator, address, result);
+    write_address_4C(emulator, address, result);
 
     SET_FLAG_Z(emulator, result);
     set_flag(emulator, FLAG_H, 0);
@@ -570,13 +612,13 @@ static void swapR8(Emulator* emulator, REGISTER_TYPE reg){
 
 static void swapR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2){
     uint16_t address = get_reg16(emulator, reg1, reg2);
-    uint8_t value = read_address(emulator, address);
+    uint8_t value = read_address_4C(emulator, address);
     uint8_t high = value >> 4;
     uint8_t low = value & 0xF;
 
     uint8_t new = (low << 4) | high;
 
-    write_address(emulator, address, value);
+    write_address_4C(emulator, address, value);
 
     SET_FLAG_Z(emulator, new);
     set_flag(emulator, FLAG_H, 0);
@@ -594,7 +636,7 @@ static void BitR8(Emulator* emulator, REGISTER_TYPE reg, uint8_t bit){
 }
 
 static void BitR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2, uint8_t bit){
-    uint8_t value = read_address(emulator, get_reg16(emulator, reg1, reg2));
+    uint8_t value = read_address_4C(emulator, get_reg16(emulator, reg1, reg2));
     uint8_t bitvalue = (value >> bit) & 0x1;
 
     SET_FLAG_Z(emulator, bitvalue);
@@ -612,11 +654,11 @@ static void setR8(Emulator* emulator, REGISTER_TYPE reg, uint8_t bit){
 
 static void setR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2, uint8_t bit){
     uint16_t address = get_reg16(emulator, reg1, reg2);
-    uint8_t value = read_address(emulator, address);
+    uint8_t value = read_address_4C(emulator, address);
     uint8_t orvalue = 1 << bit;
     uint8_t result = value | orvalue;
 
-    write_address(emulator, address, result);
+    write_address_4C(emulator, address, result);
 }
 
 static void resetR8(Emulator* emulator, REGISTER_TYPE reg, uint8_t bit){
@@ -629,11 +671,11 @@ static void resetR8(Emulator* emulator, REGISTER_TYPE reg, uint8_t bit){
 
 static void resetR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2, uint8_t bit){
     uint16_t address = get_reg16(emulator, reg1, reg2);
-    uint8_t value = read_address(emulator, address);
+    uint8_t value = read_address_4C(emulator, address);
     uint8_t andvalue = ~(1 << bit);
     uint8_t result = value & andvalue;
 
-    write_address(emulator, address, result);
+    write_address_4C(emulator, address, result);
 }
 
 static void addRR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2, REGISTER_TYPE reg3, REGISTER_TYPE reg4){
@@ -648,6 +690,8 @@ static void addRR16(Emulator* emulator, REGISTER_TYPE reg1, REGISTER_TYPE reg2, 
     set_flag(emulator, FLAG_N, 0);
     SET_FLAG_H_ADD16(emulator, reg_16B_1_2, reg_16B_3_4);
     SET_FLAG_C_ADD16(emulator, reg_16B_1_2, reg_16B_3_4);
+
+    cyclesSync(emulator);
 }
 
 static void add_R(Emulator* emulator, REGISTER_TYPE r1, REGISTER_TYPE r2){
@@ -666,7 +710,7 @@ static void add_R(Emulator* emulator, REGISTER_TYPE r1, REGISTER_TYPE r2){
 
 static void add_u8(Emulator* emulator, REGISTER_TYPE r1){
     uint8_t byte1 = get_reg_byte(emulator, r1);
-    uint8_t byte2 = readByte(emulator);
+    uint8_t byte2 = readByte4C(emulator);
 
     uint8_t final_val = byte1 + byte2;
 
@@ -680,7 +724,7 @@ static void add_u8(Emulator* emulator, REGISTER_TYPE r1){
 
 static void addR_RR(Emulator* emulator, REGISTER_TYPE r1, REGISTER_TYPE r2, REGISTER_TYPE r3){
     uint8_t __r1_val = get_reg_byte(emulator, r1);
-    uint8_t __r2_3_val = read_address(emulator, get_reg16(emulator, r2, r3));
+    uint8_t __r2_3_val = read_address_4C(emulator, get_reg16(emulator, r2, r3));
     uint8_t final = __r1_val + __r2_3_val;
 
     write_to_reg(emulator, r1, final);
@@ -743,7 +787,7 @@ static void adc_R(Emulator* emulator, REGISTER_TYPE r1, REGISTER_TYPE r2){
 
 static void adc_u8(Emulator* emulator, REGISTER_TYPE r1){
     uint8_t r1_val = get_reg_byte(emulator, r1);
-    uint8_t byte = readByte(emulator);
+    uint8_t byte = readByte4C(emulator);
     uint8_t flag_c_val = get_flag(emulator, FLAG_C);
     uint8_t final = r1_val + byte;
     uint8_t result = final + flag_c_val;
@@ -758,7 +802,7 @@ static void adc_u8(Emulator* emulator, REGISTER_TYPE r1){
 
 static void adcR_RR(Emulator* emulator, REGISTER_TYPE r1, REGISTER_TYPE r2, REGISTER_TYPE r3) {
     uint8_t __r1_val = get_reg_byte(emulator, r1);
-    uint8_t __r2_3_val = read_address(emulator, get_reg16(emulator, r2, r3));
+    uint8_t __r2_3_val = read_address_4C(emulator, get_reg16(emulator, r2, r3));
     uint8_t flag_c_val = get_flag(emulator, FLAG_C);
     uint8_t final = __r1_val + __r2_3_val;
     uint8_t result = final + flag_c_val;
@@ -786,7 +830,7 @@ static void sub_R(Emulator* emulator, REGISTER_TYPE r1, REGISTER_TYPE r2){
 
 static void sub_u8(Emulator* emulator, REGISTER_TYPE r1){
     uint8_t r1_val = get_reg_byte(emulator, r1);
-    uint8_t byte = readByte(emulator);
+    uint8_t byte = readByte4C(emulator);
     uint8_t final = r1_val - byte;
 
     write_to_reg(emulator, r1, final);
@@ -799,7 +843,7 @@ static void sub_u8(Emulator* emulator, REGISTER_TYPE r1){
 
 static void subR_RR(Emulator* emulator, REGISTER_TYPE r1, REGISTER_TYPE r2, REGISTER_TYPE r3){
     uint8_t __r1_val = get_reg_byte(emulator, r1);
-    uint8_t __r2_3_val = read_address(emulator, get_reg16(emulator, r2, r3));
+    uint8_t __r2_3_val = read_address_4C(emulator, get_reg16(emulator, r2, r3));
     uint8_t final = __r1_val - __r2_3_val;
 
     write_to_reg(emulator, r1, final);
@@ -827,7 +871,7 @@ static void sbc_R(Emulator* emulator, REGISTER_TYPE r1, REGISTER_TYPE r2){
 
 static void sbc_u8(Emulator* emulator, REGISTER_TYPE r1){
     uint8_t r1_val = get_reg_byte(emulator, r1);
-    uint8_t byte = readByte(emulator);
+    uint8_t byte = readByte4C(emulator);
     uint8_t flag_c_val = get_flag(emulator, FLAG_C);
     uint8_t final = r1_val - byte;
     uint8_t result = final - flag_c_val;
@@ -842,7 +886,7 @@ static void sbc_u8(Emulator* emulator, REGISTER_TYPE r1){
 
 static void sbcR_RR(Emulator* emulator, REGISTER_TYPE r1, REGISTER_TYPE r2, REGISTER_TYPE r3) {
     uint8_t __r1_val = get_reg_byte(emulator, r1);
-    uint8_t __r2_3_val = read_address(emulator, get_reg16(emulator, r2, r3));
+    uint8_t __r2_3_val = read_address_4C(emulator, get_reg16(emulator, r2, r3));
     uint8_t flag_c_val = get_flag(emulator, FLAG_C);
     uint8_t final = __r1_val - __r2_3_val;
     uint8_t result = final - flag_c_val;
@@ -870,7 +914,7 @@ static void and_R(Emulator* emulator, REGISTER_TYPE r1, REGISTER_TYPE r2){
 
 static void and_u8(Emulator* emulator, REGISTER_TYPE r1){
     uint8_t r1_val = get_reg_byte(emulator, r1);
-    uint8_t byte = readByte(emulator);
+    uint8_t byte = readByte4C(emulator);
     uint8_t final_val = r1_val & byte;
 
     write_to_reg(emulator, r1, final_val);
@@ -883,7 +927,7 @@ static void and_u8(Emulator* emulator, REGISTER_TYPE r1){
 
 static void andR_RR(Emulator* emulator, REGISTER_TYPE r1, REGISTER_TYPE r2, REGISTER_TYPE r3){
     uint8_t __r1_val = get_reg_byte(emulator, r1);
-    uint8_t __r2_3_val = read_address(emulator, get_reg16(emulator, r2, r3));
+    uint8_t __r2_3_val = read_address_4C(emulator, get_reg16(emulator, r2, r3));
     uint8_t final = __r1_val & __r2_3_val;
 
     write_to_reg(emulator, r1, final);
@@ -909,7 +953,7 @@ static void xor_R(Emulator* emulator, REGISTER_TYPE r1, REGISTER_TYPE r2){
 
 static void xor_u8(Emulator* emulator, REGISTER_TYPE r1){
     uint8_t r1_val = get_reg_byte(emulator, r1);
-    uint8_t byte = readByte(emulator);
+    uint8_t byte = readByte4C(emulator);
     uint8_t final_val = r1_val ^ byte;
 
     write_to_reg(emulator, r1, final_val);
@@ -922,7 +966,7 @@ static void xor_u8(Emulator* emulator, REGISTER_TYPE r1){
 
 static void xorR_RR(Emulator* emulator, REGISTER_TYPE r1, REGISTER_TYPE r2, REGISTER_TYPE r3){
     uint8_t __r1_val = get_reg_byte(emulator, r1);
-    uint8_t __r2_3_val = read_address(emulator, get_reg16(emulator, r2, r3));
+    uint8_t __r2_3_val = read_address_4C(emulator, get_reg16(emulator, r2, r3));
     uint8_t final = __r1_val ^ __r2_3_val;
 
     write_to_reg(emulator, r1, final);
@@ -948,7 +992,7 @@ static void or_R(Emulator* emulator, REGISTER_TYPE r1, REGISTER_TYPE r2){
 
 static void or_u8(Emulator* emulator, REGISTER_TYPE r1){
     uint8_t r1_val = get_reg_byte(emulator, r1);
-    uint8_t byte = readByte(emulator);
+    uint8_t byte = readByte4C(emulator);
     uint8_t final_val = r1_val | byte;
 
     write_to_reg(emulator, r1, final_val);
@@ -961,7 +1005,7 @@ static void or_u8(Emulator* emulator, REGISTER_TYPE r1){
 
 static void orR_RR(Emulator* emulator, REGISTER_TYPE r1, REGISTER_TYPE r2, REGISTER_TYPE r3){
     uint8_t __r1_val = get_reg_byte(emulator, r1);
-    uint8_t __r2_3_val = read_address(emulator, get_reg16(emulator, r2, r3));
+    uint8_t __r2_3_val = read_address_4C(emulator, get_reg16(emulator, r2, r3));
     uint8_t final = __r1_val | __r2_3_val;
 
     write_to_reg(emulator, r1, final);
@@ -985,7 +1029,7 @@ static void compare_R(Emulator* emulator, REGISTER_TYPE r1, REGISTER_TYPE r2){
 
 static void compare_u8(Emulator* emulator, REGISTER_TYPE r1){
     uint8_t r1_val = get_reg_byte(emulator, r1);
-    uint8_t byte = readByte(emulator);
+    uint8_t byte = readByte4C(emulator);
     uint8_t final = r1_val - byte;
 
     SET_FLAG_Z(emulator, final);
@@ -996,7 +1040,7 @@ static void compare_u8(Emulator* emulator, REGISTER_TYPE r1){
 
 static void compareR_RR(Emulator* emulator, REGISTER_TYPE r1, REGISTER_TYPE r2, REGISTER_TYPE r3){
     uint8_t __r1_val = get_reg_byte(emulator, r1);
-    uint8_t __r2_3_val = read_address(emulator, get_reg16(emulator, r2, r3));
+    uint8_t __r2_3_val = read_address_4C(emulator, get_reg16(emulator, r2, r3));
     uint8_t final = __r1_val - __r2_3_val;
 
     SET_FLAG_Z(emulator, final);
@@ -1008,8 +1052,8 @@ static void compareR_RR(Emulator* emulator, REGISTER_TYPE r1, REGISTER_TYPE r2, 
 static inline uint16_t pop16(Emulator* emulator){
     uint16_t sp_val = emulator->rSP;
 
-    uint8_t before_byte = read_address(emulator, sp_val);
-    uint8_t after_byte = read_address(emulator, sp_val + 1);
+    uint8_t before_byte = read_address_4C(emulator, sp_val);
+    uint8_t after_byte = read_address_4C(emulator, sp_val + 1);
     
     emulator->rSP = sp_val + 2;
 
@@ -1019,30 +1063,35 @@ static inline uint16_t pop16(Emulator* emulator){
 static inline void push16(Emulator* emulator, uint16_t u16byte){
     uint16_t sp = emulator->rSP;
 
-    write_address(emulator, sp - 1, u16byte >> 8);
-    write_address(emulator, sp - 2, u16byte & 0xFF);
+    write_address_4C(emulator, sp - 1, u16byte >> 8);
+    write_address_4C(emulator, sp - 2, u16byte & 0xFF);
 
     emulator->rSP = sp - 2;
 }
 
-static void return_condition(Emulator* emulator, bool condition){
-    if (condition == true)emulator->rPC = pop16(emulator);
-}
-
 static inline void ret(Emulator* emulator){
     emulator->rPC = pop16(emulator);
+
+    cyclesSync(emulator);
+}
+
+static void return_condition(Emulator* emulator, bool condition){
+    cyclesSync(emulator);
+    if (condition == true)ret(emulator);
 }
 
 static void jumpCondition(Emulator* emulator, bool condition){
     uint16_t address = read2Bytes(emulator);
 
     if (condition == true){
+        cyclesSync(emulator);
         emulator->rPC = address;
     }
 }
 
 // Call pushes reg PC and sets reg PC to the given address
 static void call(Emulator* emulator, uint16_t address){
+    cyclesSync(emulator);
     push16(emulator, emulator->rPC);
     emulator->rPC = address;
 }
@@ -1064,9 +1113,14 @@ static bool checkIME(Emulator* emulator, uint8_t IE, uint8_t IF){
 }
 
 static void dispatch_interrupt(Emulator* emulator, INTERRUPT interrupt){
+    /* This does 8 cycles */
+    
     IMD(emulator);
 
     emulator->IF &= ~(1 << interrupt);
+
+    cyclesSync(emulator);
+    cyclesSync(emulator);
 
     switch (interrupt)
     {
@@ -1075,7 +1129,7 @@ static void dispatch_interrupt(Emulator* emulator, INTERRUPT interrupt){
         case INTERRUPT_TIMER:       printf("\t-> INTERRUPT_TIMER\n");     call(emulator, 0x50); break;
         case INTERRUPT_SERIAL:      printf("\t-> INTERRUPT_SERIAL\n");    call(emulator, 0x58); break;
         case INTERRUPT_JOYPAD:      printf("\t-> INTERRUPT_JOYPAD\n");    call(emulator, 0x60); break;
-        default:                                                                              break;
+        default:                                                                                break;
     }
 }
 
@@ -1138,7 +1192,7 @@ static void handleInterrupts(Emulator* emulator){
 }
 
 static void prefixCB(Emulator* emulator){
-    uint8_t byte = readByte(emulator);
+    uint8_t byte = readByte4C(emulator);
 
     switch (byte)
     {
@@ -1428,13 +1482,14 @@ void dispatch_emulator(Emulator* emulator){
 
     if (emulator->haltMode == true){
         //printf("HALTING EMULATOR\n");
+        cyclesSync(emulator);
         goto skip;
     } else if (emulator->schedule_halt_bug == true) {
         opcode = readByte(emulator);
         emulator->rPC--;
-        //printf("HALT BUG SCHEDULED\n");
+        cyclesSync(emulator);
     } else {
-        opcode = read_address(emulator, emulator->rPC);
+        opcode = read_address_4C(emulator, emulator->rPC);
     }
 
     //printf("\t0x%02x| Instruction Details:", opcode);
@@ -1454,11 +1509,11 @@ void dispatch_emulator(Emulator* emulator){
         case 0x06: LOAD_8B_R(emulator, REGISTER_B); break; // LD B,u8
         case 0x07: rotateLeftR8(emulator, REGISTER_A, true); break; // RLC_ REG A
         case 0x08: {
-            uint16_t two_bytes = read2Bytes(emulator);
+            uint16_t two_bytes = read2Bytes_8C(emulator);
             uint16_t SP_VAL = emulator->rSP;
 
-            write_address(emulator, two_bytes + 1, SP_VAL >> 8);
-            write_address(emulator, two_bytes, SP_VAL & 0xFF);
+            write_address_4C(emulator, two_bytes + 1, SP_VAL >> 8);
+            write_address_4C(emulator, two_bytes, SP_VAL & 0xFF);
             break;
         }
         case 0x09: addRR16(emulator, REGISTER_H, REGISTER_L, REGISTER_B, REGISTER_C);break;
@@ -1477,7 +1532,7 @@ void dispatch_emulator(Emulator* emulator){
         case 0x15: decrement_R_8(emulator, REGISTER_D); break;
         case 0x16: LOAD_8B_R(emulator, REGISTER_D); break;
         case 0x17: RotateLeftCarryR8(emulator, REGISTER_A, false); break;
-        case 0x18: emulator->rPC += (uint8_t)readByte(emulator); break; // JR i8
+        case 0x18: emulator->rPC += (uint8_t)readByte4C(emulator); break; // JR i8
         case 0x19: addRR16(emulator, REGISTER_H, REGISTER_L, REGISTER_D, REGISTER_E); break;
         case 0x1A: LOAD_8R_16BRR(emulator, REGISTER_A, REGISTER_D, REGISTER_E); break;
         case 0x1B: DEC_R1_R2(emulator, REGISTER_D, REGISTER_E); break;
@@ -1510,26 +1565,26 @@ void dispatch_emulator(Emulator* emulator){
         case 0x34: {
             // increment address in HL
             uint16_t address = get_reg16(emulator, REGISTER_H, REGISTER_L);
-            uint8_t old = read_address(emulator, address);
+            uint8_t old = read_address_4C(emulator, address);
             uint8_t new = old + 1;
 
             SET_FLAG_Z(emulator, new);
             SET_FLAG_H_ADD16(emulator, old, 1);
             set_flag(emulator, FLAG_N, 0);
-            write_address(emulator, address, new);
+            write_address_4C(emulator, address, new);
 
             break;
         }
         case 0x35: {
             // opposite of 0x34 (decrement)
             uint16_t address = get_reg16(emulator, REGISTER_H, REGISTER_L);
-            uint8_t old = read_address(emulator, address);
+            uint8_t old = read_address_4C(emulator, address);
             uint8_t new = old - 1;
 
             SET_FLAG_Z(emulator, new);
             SET_FLAG_H_ADD16(emulator, old, 1);
             set_flag(emulator, FLAG_N, 0);
-            write_address(emulator, address, new);
+            write_address_4C(emulator, address, new);
 
             break;
         }
@@ -1701,8 +1756,8 @@ void dispatch_emulator(Emulator* emulator){
         case 0xC0: return_condition(emulator, NZ(emulator)); break;
         case 0xC1: POP_RR(emulator, REGISTER_B, REGISTER_C); break;
         case 0xC2: jumpCondition(emulator, NZ(emulator)); break;
-        case 0xC3: JUMP_u16(emulator, read2Bytes(emulator)); break;
-        case 0xC4: callCondition(emulator, read2Bytes(emulator), NZ(emulator)); break;
+        case 0xC3: JUMP_u16(emulator, read2Bytes_8C(emulator)); break;
+        case 0xC4: callCondition(emulator, read2Bytes_8C(emulator), NZ(emulator)); break;
         case 0xC5: PUSH_RR(emulator, REGISTER_B, REGISTER_C); break;
         case 0xC6: add_u8(emulator, REGISTER_A); break;
         case 0xC7: RST(emulator, 0x00); break;
@@ -1710,37 +1765,40 @@ void dispatch_emulator(Emulator* emulator){
         case 0xC9: ret(emulator); break;
         case 0xCA: jumpCondition(emulator, Z(emulator)); break;
         case 0xCB: prefixCB(emulator); break;
-        case 0xCC: callCondition(emulator, read2Bytes(emulator), Z(emulator)); break;
-        case 0xCD: call(emulator, read2Bytes(emulator)); break;
+        case 0xCC: callCondition(emulator, read2Bytes_8C(emulator), Z(emulator)); break;
+        case 0xCD: call(emulator, read2Bytes_8C(emulator)); break;
         case 0xCE: adc_u8(emulator, REGISTER_A); break;
         case 0xCF: RST(emulator, 0x08); break;
         
         case 0xD0: return_condition(emulator, NC(emulator)); break;
         case 0xD1: POP_RR(emulator, REGISTER_D, REGISTER_E); break;
         case 0xD2: jumpCondition(emulator, NC(emulator)); break;
-        case 0xD4: callCondition(emulator, read2Bytes(emulator), NC(emulator)); break;
+        case 0xD4: callCondition(emulator, read2Bytes_8C(emulator), NC(emulator)); break;
         case 0xD5: PUSH_RR(emulator, REGISTER_D, REGISTER_E); break;
         case 0xD6: sub_u8(emulator, REGISTER_A); break;
         case 0xD7: RST(emulator, 0x10); break;
         case 0xD8: return_condition(emulator, C(emulator)); break;
         case 0xD9: ret(emulator); break;
         case 0xDA: jumpCondition(emulator, C(emulator)); break;
-        case 0xDC: callCondition(emulator, read2Bytes(emulator), C(emulator)); break;
+        case 0xDC: callCondition(emulator, read2Bytes_8C(emulator), C(emulator)); break;
         case 0xDE: sbc_u8(emulator, REGISTER_A); break;
         case 0xDF: RST(emulator, 0x18); break;
         
-        case 0xE0: write_address(emulator, 0xFF00 + readByte(emulator), get_reg_byte(emulator, REGISTER_A)); break;
+        case 0xE0: write_address_4C(emulator, 0xFF00 + readByte4C(emulator), get_reg_byte(emulator, REGISTER_A)); break;
         case 0xE1: POP_RR(emulator, REGISTER_H, REGISTER_L); break;
-        case 0xE2: write_address(emulator, 0xFF00 + get_reg_byte(emulator, REGISTER_C), get_reg_byte(emulator, REGISTER_A)); break;
+        case 0xE2: write_address_4C(emulator, 0xFF00 + get_reg_byte(emulator, REGISTER_C), get_reg_byte(emulator, REGISTER_A)); break;
         case 0xE5: PUSH_RR(emulator, REGISTER_H, REGISTER_L); break;
         case 0xE6: and_u8(emulator, REGISTER_A); break;
         case 0xE7: RST(emulator, 0x20); break;
         case 0xE8: {
             uint16_t old = emulator->rSP;
-            int8_t byte = (int8_t)readByte(emulator);
+            int8_t byte = (int8_t)readByte4C(emulator);
             uint16_t result = old + byte;
 
             emulator->rSP = result;
+
+            cyclesSync(emulator);
+            cyclesSync(emulator);
 
             set_flag(emulator, FLAG_Z, 0);
             set_flag(emulator, FLAG_N, 0);
@@ -1753,20 +1811,21 @@ void dispatch_emulator(Emulator* emulator){
             break;
         }
         case 0xE9: JUMP_RR(emulator, REGISTER_H, REGISTER_L); break;
-        case 0xEA: write_address(emulator, read2Bytes(emulator), get_reg_byte(emulator, REGISTER_A)); break;
+        case 0xEA: write_address_4C(emulator, read2Bytes(emulator), get_reg_byte(emulator, REGISTER_A)); break;
         case 0xEE: xor_u8(emulator, REGISTER_A); break;
         case 0xEF: RST(emulator, 0x28); break;
         
-        case 0xF0: write_to_reg(emulator, REGISTER_A, read_address(emulator, 0xFF00 + readByte(emulator))); break;
+        case 0xF0: write_to_reg(emulator, REGISTER_A, read_address_4C(emulator, 0xFF00 + readByte4C(emulator))); break;
         case 0xF1: POP_RR(emulator, REGISTER_A, REGISTER_F); write_to_reg(emulator, REGISTER_F, get_reg_byte(emulator, REGISTER_F & 0xF0)); break;
-        case 0xF2: write_to_reg(emulator, REGISTER_A, 0xFF00 + get_reg_byte(emulator, REGISTER_C)); break;
+        case 0xF2: write_to_reg(emulator, REGISTER_A, read_address_4C(emulator, 0xFF00 + get_reg_byte(emulator, REGISTER_C))); break;
         case 0xF3: IMD(emulator); break;
         case 0xF5: PUSH_RR(emulator, REGISTER_A, REGISTER_F); break;
         case 0xF6: or_u8(emulator, REGISTER_A); break;
         case 0xF7: RST(emulator, 0x30); break;
         case 0xF8: {
+            /* This uses 8 cycles, readbyte4C + cyclesSync */
             uint16_t old = emulator->rSP;
-            int8_t byte = (int8_t) readByte(emulator);
+            int8_t byte = (int8_t) readByte4C(emulator);
             uint16_t final = set_reg16(emulator, old + byte, REGISTER_H, REGISTER_L);
 
             set_flag(emulator, FLAG_Z, 0);
@@ -1777,10 +1836,12 @@ void dispatch_emulator(Emulator* emulator){
             SET_FLAG_H_ADD(emulator, old, (uint8_t)byte);
             SET_FLAG_C_ADD(emulator, old, (uint8_t)byte);
 
+            cyclesSync(emulator);
+
             break;
         }
         case 0xF9: emulator->rSP = get_reg16(emulator, REGISTER_H, REGISTER_L); break;
-        case 0xFA: write_to_reg(emulator, REGISTER_A, read_address(emulator, read2Bytes(emulator))); break;
+        case 0xFA: write_to_reg(emulator, REGISTER_A, read_address_4C(emulator, read2Bytes_8C(emulator))); break;
         case 0xFB: IME(emulator); break;
         case 0xFE: compare_u8(emulator, REGISTER_A); break;
         case 0xFF: RST(emulator, 0x38); break;
