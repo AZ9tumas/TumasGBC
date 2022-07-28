@@ -2,8 +2,7 @@
 #define gbc_cpu
 
 #include "emulator.h"
-#include "cartridge.h"
-#include "common.h"
+#include "display.h"
 
 typedef enum {
     INTERRUPT_VBLANK,
@@ -21,6 +20,10 @@ typedef enum {
     FLAG_N,
     FLAG_Z
 } FLAG;
+
+/*
+#define ROM_N0_16KB 0x0000
+#define ROM_N0_16KB_END 0x3FFF*/
 
 typedef enum {
     ROM_N0_16KB = 0x0000,                       // 16KB ROM Bank number 0 (from cartridge)
@@ -76,7 +79,7 @@ typedef enum {
 void freeEmulator(Emulator* emulator);
 void dispatch_emulator(Emulator* emulator);
 void startEmulator(Cartridge* Cartridge, Emulator* emulator);
-
+void cyclesSync(Emulator* emulator);
 uint8_t read_address(Emulator* emulator, uint16_t address);
 
 #endif
