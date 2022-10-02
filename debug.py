@@ -1,8 +1,5 @@
 # Debugger to reduce the pain when debugging the insane output given by the emulators ...
 import os
-import subprocess
-import sys
-import time
 
 class bcolors:
     HEADER = '\033[95m'
@@ -34,13 +31,13 @@ ignoreFlags = input("Ignore flags? (y/n) ") == 'y'
 ignoreRegs = input("Ignore Registers? (y/n) ") == 'y'
 
 if ignoreRegs == 'exit' or ignoreFlags == 'exit': leaveDebug = True
-
+'''
 del logLines[0]
 del logLines[0]
 
 del tumasLines[len(tumasLines)-1]
 del tumasLines[len(tumasLines)-1]
-
+'''
 while True:
 
     if leaveDebug: break
