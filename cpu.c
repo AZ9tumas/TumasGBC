@@ -54,6 +54,8 @@ bool wrong = false;
 static void write_address(Emulator* emulator, uint16_t address, uint8_t byte);
 uint8_t read_address(Emulator* emulator, uint16_t address);
 
+#define NO_INF_RUN
+
 static void run(Emulator* emulator){
     emulator->start_time_ticks = getTime();
 
@@ -67,28 +69,16 @@ static void run(Emulator* emulator){
         for (int i = 0; i < 2000; i ++){
             dispatch_emulator(emulator);
             dispatch_count ++;
-            if (dispatch_count >= 300000) {
-                emulator->run = false;
-                return;
-            }
+
+            #ifdef NO_INF_RUN
+                if (dispatch_count >= 300000) {
+                    emulator->run = false;
+                    return;
+                }
+            #endif
         }
     }
 }
-
-/*
-
-where the LY actually increments 6 cycles before it should
-lmao
-so if u check within those 6 cycles
-my emu increments it early
-ur doesnt
-so its 1 value off
-lemme get the code
-and yeah gameboy is full of these quirks
-this is just the most basic one
-if u really care about timing ull have to implement this stuff
-
-*/
 
 void startEmulator(Cartridge* cartridge, Emulator* emulator){
     initCartridgeEmulator(emulator, *cartridge);
@@ -98,6 +88,8 @@ void startEmulator(Cartridge* cartridge, Emulator* emulator){
         printf("Unable to initialise SDL 2.0\n");
         return;
     }
+
+    write_address(emulator, 0xFF44, 0x00);
 
     emulator->run = true;
     run(emulator);
@@ -113,7 +105,7 @@ void cyclesSync(Emulator* emulator){
     * also on LY = 153
     it resets to 0 early
     6 cycles early
-    */
+    
 
     if (read_address(emulator, 0xFF44) > 153){
         write_address(emulator, 0xFF44, 0x00);
@@ -121,7 +113,7 @@ void cyclesSync(Emulator* emulator){
 
     if ((emulator->clock + 4) % 456 == 0) {
         write_address(emulator, 0xFF44, read_address(emulator, 0xFF44) + 1);
-    }
+    }*/
 
     #ifndef USE_SDL2
         Sync_Display(emulator, 4);
@@ -182,7 +174,7 @@ static inline uint8_t get_flag(Emulator* emulator, FLAG flag){
 
 uint8_t read_address(Emulator* emulator, uint16_t address){
     /* Debugging stuff */
-    if (address >= VRAM_N0_8KB && address <= VRAM_N0_8KB_END)   printf ("VRAM -> 0x%02x\n", emulator->VRAM[address - VRAM_N0_8KB]);
+    //if (address >= VRAM_N0_8KB && address <= VRAM_N0_8KB_END)   printf ("VRAM -> 0x%02x\n", emulator->VRAM[address - VRAM_N0_8KB]);
 
     /* Main Stuff */
     if (address >= 0x0000 && address <= 0x3FFF)                 return emulator->cartridge.file[address];
@@ -198,7 +190,9 @@ uint8_t read_address(Emulator* emulator, uint16_t address){
 
 static void write_address(Emulator* emulator, uint16_t address, uint8_t byte){
     if ((address >= ECHO_N0_8KB && address <= ECHO_N0_8KB_END) || (address >= UNUSABLE_N0 && address <= UNUSABLE_N0_END)) {
-        printf("\n\t<== WARNING ==> ATTEMPT TO WRITE TO READ ONLY AREA\n");
+        //printf("\n\t<== WARNING ==> ATTEMPT TO WRITE TO READ ONLY AREA\n");
+        //emulator->run = false;
+        return;
     }
 
     if (address >= VRAM_N0_8KB && address <= VRAM_N0_8KB_END) {
@@ -1223,7 +1217,11 @@ static void handleInterrupts(Emulator* emulator){
 }
 
 static void prefixCB(Emulator* emulator){
-    uint8_t byte = readByte4C(emulator);
+    uint8_t byte = readByte(emulator);
+    cyclesSync(emulator);
+
+    //printRegisters(emulator);
+    //printCBInstruction(emulator, byte);
 
     switch (byte)
     {
@@ -1512,10 +1510,11 @@ void dispatch_emulator(Emulator* emulator){
     }
 
     if (emulator->haltMode == true){
-        //printf("HALTING EMULATOR\n");
+        printf("HALTING EMULATOR\n");
         cyclesSync(emulator);
         goto skip;
     } else if (emulator->schedule_halt_bug == true) {
+        printf("HALT BUG\n");
         opcode = readByte(emulator);
         emulator->rPC--;
         cyclesSync(emulator);
@@ -1524,8 +1523,8 @@ void dispatch_emulator(Emulator* emulator){
     }
 
     //printf("\t0x%02x| Instruction Details:", opcode);
-    printRegisters(emulator);
-    printInstruction(emulator);
+    //printRegisters(emulator);
+    //printInstruction(emulator);
 
     emulator->rPC ++;
 
@@ -1534,7 +1533,7 @@ void dispatch_emulator(Emulator* emulator){
         case 0x00: break;
         case 0x01: LOAD_16B_RR(emulator, REGISTER_B, REGISTER_C); break; // LD BC,u16
         case 0x02: LOAD_16RB_R(emulator, REGISTER_B, REGISTER_C, REGISTER_A); break; // LD (BC),A
-        case 0x03: INC_R1_R2(emulator, REGISTER_B, REGISTER_C); break; // INC BC
+        case 0x03: INC_R1_R2(emulator, REGISTER_B, REGISTER_C); cyclesSync(emulator); break; // INC BC
         case 0x04: increment_R_8(emulator, REGISTER_B); break; // INC B
         case 0x05: decrement_R_8(emulator, REGISTER_B); break; // DEC B
         case 0x06: LOAD_8B_R(emulator, REGISTER_B); break; // LD B,u8
@@ -1558,12 +1557,12 @@ void dispatch_emulator(Emulator* emulator){
         case 0x10: break; // STOP (stops cpu)
         case 0x11: LOAD_16B_RR(emulator, REGISTER_D, REGISTER_E);break;
         case 0x12: LOAD_16RB_R(emulator, REGISTER_D, REGISTER_E, REGISTER_A); break;
-        case 0x13: INC_R1_R2(emulator, REGISTER_B, REGISTER_C); break;
+        case 0x13: INC_R1_R2(emulator, REGISTER_D, REGISTER_E); cyclesSync(emulator); break;
         case 0x14: increment_R_8(emulator, REGISTER_D); break;
         case 0x15: decrement_R_8(emulator, REGISTER_D); break;
         case 0x16: LOAD_8B_R(emulator, REGISTER_D); break;
         case 0x17: RotateLeftCarryR8(emulator, REGISTER_A, false); break;
-        case 0x18: emulator->rPC += (uint8_t)readByte4C(emulator); break; // JR i8
+        case 0x18: emulator->rPC += (uint8_t)readByte4C(emulator); cyclesSync(emulator); break; // JR i8
         case 0x19: addRR16(emulator, REGISTER_H, REGISTER_L, REGISTER_D, REGISTER_E); break;
         case 0x1A: LOAD_8R_16BRR(emulator, REGISTER_A, REGISTER_D, REGISTER_E); break;
         case 0x1B: DEC_R1_R2(emulator, REGISTER_D, REGISTER_E); break;
@@ -1575,7 +1574,7 @@ void dispatch_emulator(Emulator* emulator){
         case 0x20: JumpConditionRelative(emulator, NZ(emulator)); break; // JR NZ i8
         case 0x21: LOAD_16B_RR(emulator, REGISTER_H, REGISTER_L); break;
         case 0x22: LOAD_16RB_R(emulator, REGISTER_H, REGISTER_L, REGISTER_A); INC_R1_R2(emulator, REGISTER_H, REGISTER_L); break;
-        case 0x23: INC_R1_R2(emulator, REGISTER_H, REGISTER_L); break;
+        case 0x23: INC_R1_R2(emulator, REGISTER_H, REGISTER_L); cyclesSync(emulator); break;
         case 0x24: increment_R_8(emulator, REGISTER_H); break;
         case 0x25: decrement_R_8(emulator, REGISTER_H); break;
         case 0x26: LOAD_8B_R(emulator, REGISTER_H); break;
@@ -1639,10 +1638,12 @@ void dispatch_emulator(Emulator* emulator){
             SET_FLAG_H_ADD16(emulator, hl_byte, sp_byte);
             SET_FLAG_C_ADD16(emulator, hl_byte, sp_byte);
 
+            cyclesSync(emulator);
+
             break;
         }
         case 0x3A: LOAD_8R_16BRR(emulator, REGISTER_A, REGISTER_H, REGISTER_L); DEC_R1_R2(emulator, REGISTER_H, REGISTER_L); break;
-        case 0x3B: emulator->rSP--; break;
+        case 0x3B: emulator->rSP--; cyclesSync(emulator); break;
         case 0x3C: increment_R_8(emulator, REGISTER_A); break;
         case 0x3D: decrement_R_8(emulator, REGISTER_A); break;
         case 0x3E: LOAD_8B_R(emulator, REGISTER_A); break;
@@ -1842,12 +1843,21 @@ void dispatch_emulator(Emulator* emulator){
             break;
         }
         case 0xE9: JUMP_RR(emulator, REGISTER_H, REGISTER_L); break;
-        case 0xEA: write_address_4C(emulator, read2Bytes(emulator), get_reg_byte(emulator, REGISTER_A)); break;
+        case 0xEA: write_address_4C(emulator, read2Bytes(emulator), get_reg_byte(emulator, REGISTER_A)); cyclesSync(emulator); cyclesSync(emulator); break;
         case 0xEE: xor_u8(emulator, REGISTER_A); break;
         case 0xEF: RST(emulator, 0x28); break;
         
-        case 0xF0: write_to_reg(emulator, REGISTER_A, read_address_4C(emulator, 0xFF00 + readByte4C(emulator))); break;
-        case 0xF1: POP_RR(emulator, REGISTER_A, REGISTER_F); write_to_reg(emulator, REGISTER_F, get_reg_byte(emulator, REGISTER_F & 0xF0)); break;
+        case 0xF0: {
+            // vm->GPR[R] = readAddr_4C(vm, PORT_ADDR + readByte_4C(vm))
+            write_to_reg(emulator, REGISTER_A, read_address_4C(emulator, 0xFF00 + readByte4C(emulator)));
+            break;
+        }
+        case 0xF1: {
+            POP_RR(emulator, REGISTER_A, REGISTER_F);
+            
+            write_to_reg(emulator, REGISTER_F, get_reg_byte(emulator, REGISTER_F) & 0xF0);
+            break;
+        }
         case 0xF2: write_to_reg(emulator, REGISTER_A, read_address_4C(emulator, 0xFF00 + get_reg_byte(emulator, REGISTER_C))); break;
         case 0xF3: IMD(emulator); break;
         case 0xF5: PUSH_RR(emulator, REGISTER_A, REGISTER_F); break;
