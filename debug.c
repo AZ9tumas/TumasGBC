@@ -21,6 +21,11 @@ static uint16_t read2Bytes(Emulator* emulator) {
     return (uint16_t)(read_address(emulator, emulator->rPC+1) | (read_address(emulator, emulator->rPC+2) << 8));
 }
 
+void printClock(Emulator* emulator){
+    unsigned long long int clock = emulator->clock;
+    printf("[%lld]", clock);
+}
+
 void printFlags(Emulator* emulator) {
     uint8_t flagState = emulator->rF;
     
@@ -72,6 +77,10 @@ void printCBInstruction(Emulator* emulator, uint8_t byte) {
 #ifdef DEBUG_PRINT_TIMERS
 	printf("[%x|%x|%x|%x]", emulator->MEM[R_DIV], emulator->MEM[R_TIMA], emulator->MEM[R_TMA], emulator->MEM[R_TAC]);
 #endif
+
+    printf("[0x%04x]", emulator->rPC);
+    printFlags(emulator);
+    printClock(emulator);
     printf(" %5s", "");
 
     switch (byte) {
@@ -332,11 +341,6 @@ void printCBInstruction(Emulator* emulator, uint8_t byte) {
         case 0xFE: return simpleInstruction(emulator, "SET 7, (HL)");
         case 0xFF: return simpleInstruction(emulator, "SET 7, A");
     }
-}
-
-void printClock(Emulator* emulator){
-    unsigned long long int clock = emulator->clock;
-    printf("[%lld]", clock);
 }
 
 void printInstruction(Emulator* emulator) {
@@ -604,8 +608,8 @@ void printRegisters(Emulator* emulator) {
             emulator->rA, emulator->rB, emulator->rC,
             emulator->rD, emulator->rE, emulator->rH,
             emulator->rL, (uint16_t)(emulator->rSP << 8) + emulator->rSP, emulator->rPC);*/
-    printf("[A%02x|B%02x|C%02x|D%02x|E%02x|H%02x|L%02x|SP%04x|LY%02x]\n", 
+    printf("[A%02x|B%02x|C%02x|D%02x|E%02x|H%02x|L%02x|SP%04x]\n", 
             emulator->rA, emulator->rB, emulator->rC,
             emulator->rD, emulator->rE, emulator->rH,
-            emulator->rL, emulator->rSP, read_address(emulator, 0xff44));
+            emulator->rL, emulator->rSP);
 }
